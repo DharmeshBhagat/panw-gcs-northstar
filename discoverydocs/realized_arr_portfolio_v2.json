@@ -1,0 +1,192 @@
+{
+  "snapshot_month": "2024-12",
+  "total_cARR": 90762715,
+  "total_rARR": 66364901,
+  "total_gap": 24397813,
+  "portfolio_prs": 0.7312,
+  "realization_rate_pct": 73.1,
+  "tiers": [
+    {
+      "tier": "Green  (PRS \u2265 0.80)",
+      "accounts": 721,
+      "cARR": 61789953,
+      "rARR": 56197215,
+      "pct_portfolio": 68.1,
+      "avg_prs": 0.913
+    },
+    {
+      "tier": "Yellow (0.60\u20130.79)",
+      "accounts": 92,
+      "cARR": 11271988,
+      "rARR": 8231194,
+      "pct_portfolio": 12.4,
+      "avg_prs": 0.741
+    },
+    {
+      "tier": "Orange (0.30\u20130.59)",
+      "accounts": 5,
+      "cARR": 1005770,
+      "rARR": 490285,
+      "pct_portfolio": 1.1,
+      "avg_prs": 0.498
+    },
+    {
+      "tier": "Red    (< 0.30)",
+      "accounts": 182,
+      "cARR": 16695004,
+      "rARR": 1446205,
+      "pct_portfolio": 18.4,
+      "avg_prs": 0.072
+    }
+  ],
+  "shelfware": {
+    "accounts": 100,
+    "cARR": 7867583
+  },
+  "overages": {
+    "accounts": 301,
+    "cARR": 24242420
+  },
+  "monthly_trend": [
+    {
+      "month": "2024-01",
+      "total_cARR": 7959457.0,
+      "total_rARR": 5730677.37,
+      "portfolio_prs": 0.72
+    },
+    {
+      "month": "2024-02",
+      "total_cARR": 16103693.0,
+      "total_rARR": 10931751.16,
+      "portfolio_prs": 0.6788
+    },
+    {
+      "month": "2024-03",
+      "total_cARR": 26205307.0,
+      "total_rARR": 18471875.6,
+      "portfolio_prs": 0.7049
+    },
+    {
+      "month": "2024-04",
+      "total_cARR": 35040939.0,
+      "total_rARR": 24193721.17,
+      "portfolio_prs": 0.6904
+    },
+    {
+      "month": "2024-05",
+      "total_cARR": 44785636.0,
+      "total_rARR": 31964791.900000002,
+      "portfolio_prs": 0.7137
+    },
+    {
+      "month": "2024-06",
+      "total_cARR": 54640244.0,
+      "total_rARR": 39244997.4,
+      "portfolio_prs": 0.7182
+    },
+    {
+      "month": "2024-07",
+      "total_cARR": 62120108.0,
+      "total_rARR": 45101246.64,
+      "portfolio_prs": 0.726
+    },
+    {
+      "month": "2024-08",
+      "total_cARR": 69685702.0,
+      "total_rARR": 50346045.84,
+      "portfolio_prs": 0.7225
+    },
+    {
+      "month": "2024-09",
+      "total_cARR": 79552769.0,
+      "total_rARR": 57388082.400000006,
+      "portfolio_prs": 0.7214
+    },
+    {
+      "month": "2024-10",
+      "total_cARR": 89148706.0,
+      "total_rARR": 64179909.31999999,
+      "portfolio_prs": 0.7199
+    },
+    {
+      "month": "2024-11",
+      "total_cARR": 90032185.0,
+      "total_rARR": 65278402.519999996,
+      "portfolio_prs": 0.7251
+    },
+    {
+      "month": "2024-12",
+      "total_cARR": 90762715.0,
+      "total_rARR": 66364901.2,
+      "portfolio_prs": 0.7312
+    }
+  ],
+  "industry_breakdown": [
+    {
+      "industry": "Energy",
+      "accounts": 66,
+      "cARR": 5025178,
+      "rARR": 3398089.89,
+      "avg_prs": 0.758
+    },
+    {
+      "industry": "Financial Services",
+      "accounts": 188,
+      "cARR": 16272542,
+      "rARR": 11026363.45,
+      "avg_prs": 0.692
+    },
+    {
+      "industry": "Government",
+      "accounts": 40,
+      "cARR": 2900648,
+      "rARR": 2354702.97,
+      "avg_prs": 0.79
+    },
+    {
+      "industry": "Healthcare",
+      "accounts": 148,
+      "cARR": 13753191,
+      "rARR": 10223875.52,
+      "avg_prs": 0.772
+    },
+    {
+      "industry": "Manufacturing",
+      "accounts": 96,
+      "cARR": 9450982,
+      "rARR": 7494570.81,
+      "avg_prs": 0.763
+    },
+    {
+      "industry": "Media & Entertainment",
+      "accounts": 78,
+      "cARR": 7394446,
+      "rARR": 5402017.09,
+      "avg_prs": 0.761
+    },
+    {
+      "industry": "Retail",
+      "accounts": 117,
+      "cARR": 13105237,
+      "rARR": 10259595.46,
+      "avg_prs": 0.785
+    },
+    {
+      "industry": "Technology",
+      "accounts": 267,
+      "cARR": 22860491,
+      "rARR": 16205686.01,
+      "avg_prs": 0.718
+    }
+  ],
+  "spec_version": "v2.0",
+  "changes_applied": [
+    "Sustained Usage window capped at MIN(months_active, 12)",
+    "Missing health_color mapped to 0.60 (was 0.40)",
+    "Expansion Momentum guard: < 3 months active \u2192 0.10",
+    "Expansion Momentum window: trailing 6 months",
+    "Shelfware override: D=0 AND S=0 \u2192 PRS=0.00",
+    "Portfolio PRS: ARR-weighted average",
+    "DQ Step 0: orphaned + rogue logs excluded before computation"
+  ]
+}
