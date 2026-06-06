@@ -6,3 +6,4 @@ pandas
 streamlit
 plotly
 google-auth
+python-dotenv
