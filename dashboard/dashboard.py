@@ -12,11 +12,13 @@ load_dotenv()
 PROJECT_ID = (
     st.secrets.get("BIGQUERY_PROJECT_ID")
     or os.environ.get("BIGQUERY_PROJECT_ID")
+    or "panw-gcs-northstar-498507"
 )
 
 DATASET_ID = (
     st.secrets.get("BIGQUERY_DATASET_ID")
-    or os.environ.get("BIGQUERY_DATASET_ID", "gcs_north_star")
+    or os.environ.get("BIGQUERY_DATASET_ID")
+    or "gcs_north_star"
 )
 
 BAND_COLORS = {
