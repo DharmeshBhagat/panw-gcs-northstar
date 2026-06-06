@@ -70,7 +70,8 @@ def help_icon(key: str) -> None:
                 "This is the dollar value of ARR at churn risk — "
                 "customers who have committed to pay but are not "
                 "yet getting sufficient value from the platform.\n\n"
-                "Synthetic December 2024: $30M unrealized across 1,000 accounts."
+                "The dashboard calculates this gap dynamically from "
+                "BigQuery output for the selected month."
             ),
         },
         "health_bands": {
@@ -168,10 +169,9 @@ def help_icon(key: str) -> None:
                 "Total Realized ARR ÷ Total Contracted ARR × 100\n\n"
                 "Measures what percentage of contracted value is "
                 "being actively earned through platform usage.\n\n"
-                "- Synthetic December 2024: 65.2%  \n"
-                "- Synthetic June 2024 peak: 70.6%  \n\n"
-                "The 5.4 point H2 decline represents $5.2M of ARR "
-                "that was healthy in June but degraded by December."
+                "The dashboard calculates realization rate dynamically "
+                "from BigQuery output. Use the month selector to compare "
+                "performance across the synthetic 2024 dataset."
             ),
         },
     }
@@ -738,6 +738,13 @@ if compare_mode:
 def _filter_banner() -> None:
     if _FA:
         st.info(f"Filters active: {_n_filtered:,} of {_n_total:,} accounts shown")
+
+
+def prs_color(prs_val: float) -> str:
+    if prs_val >= 0.80: return "#1D9E75"
+    if prs_val >= 0.60: return "#BA7517"
+    if prs_val >= 0.30: return "#D85A30"
+    return "#A32D2D"
 
 
 def region_action(row) -> str:
@@ -1483,20 +1490,27 @@ elif page == "By Region":
             _worst_idx = region_df["portfolio_prs_pct"].astype(float).idxmin()
             _worst_region = region_df.loc[_worst_idx, "region"]
             _worst_prs = float(region_df.loc[_worst_idx, "portfolio_prs_pct"]) / 100
-            _worst_arr = float(region_df.loc[_worst_idx, "at_risk_arr"])
-            st.markdown(
-                f"""<div style="background:#1a2a3a;border-left:3px solid #BA7517;
-                    padding:10px 14px;border-radius:4px;margin:12px 0;color:#FFFFFF;font-size:13px;line-height:1.6;">
-                    <strong style="color:#E8A020;">&#x26A0; So what?</strong>&nbsp;
-                    <strong>{_worst_region}</strong> has the lowest portfolio PRS at
-                    <strong>{_worst_prs:.3f}</strong> — below the portfolio average of
-                    <strong>{portfolio_avg/100:.3f}</strong>.
-                    At-risk ARR in this region is
-                    <strong>${_worst_arr/1e6:.1f}M</strong>.
-                    Priority: CSM intervention and PS engagement for at-risk accounts.
-                </div>""",
-                unsafe_allow_html=True,
-            )
+            _worst_color = prs_color(_worst_prs)
+            st.markdown(f"""
+<div style="
+  background: #1a2a3a;
+  border-left: 3px solid #BA7517;
+  border-radius: 0 6px 6px 0;
+  padding: 10px 16px;
+  margin: 12px 0;
+  font-size: 13px;
+  color: #FFFFFF;
+  line-height: 1.6;
+">
+  <strong style="color:#BA7517">So what:</strong>
+  <strong>{_worst_region}</strong> has the lowest
+  portfolio PRS at
+  <strong style="color:{_worst_color}">{_worst_prs:.3f}</strong>
+  and should receive the first CSM/PS capacity review.
+  Address deployment and sustained usage gaps in this
+  region before expanding to others.
+</div>
+""", unsafe_allow_html=True)
 
         st.divider()
         st.subheader("Region Summary  (worst PRS first)")
@@ -1804,70 +1818,6 @@ elif page == "By Account":
 
     st.divider()
 
-    # Row 3: 12-month trend (always full year for context)
-    st.subheader(f"{selected_company} — PRS trend 2024")
-
-    trend_acct = load_account_trend(selected_acct_id)
-    if not trend_acct.empty:
-        trend_acct["Month"] = pd.to_datetime(trend_acct["month"]).dt.strftime("%b")
-        fig_atrend = px.line(
-            trend_acct, x="Month", y=["prs", "deployment_score"],
-            markers=True,
-            color_discrete_map={"prs": "#1D9E75", "deployment_score": "#4A90D9"},
-            labels={"value": "Score (0–1)", "variable": ""},
-        )
-        fig_atrend.update_layout(
-            yaxis_range=[0, 1],
-            legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            margin=dict(t=30, b=10),
-        )
-        fig_atrend.for_each_trace(lambda t: t.update(
-            name={"prs": "PRS", "deployment_score": "Deployment Score"}.get(t.name, t.name)
-        ))
-        if compare_mode:
-            fig_atrend.add_vline(
-                x=month_a.strftime("%b"), line_dash="dash", line_color="#4A90D9",
-                annotation_text=month_a.strftime("%b %Y"), annotation_position="top left",
-            )
-            fig_atrend.add_vline(
-                x=month_b.strftime("%b"), line_dash="dash", line_color="#1D9E75",
-                annotation_text=month_b.strftime("%b %Y"), annotation_position="top right",
-            )
-        st.plotly_chart(fig_atrend, use_container_width=True)
-
-    st.divider()
-
-    # Row 4: Flags
-    st.subheader("Flags")
-
-    badge_parts = []
-    if acct_row.get("shelfware_override"):
-        badge_parts.append(
-            f'<span style="background:{BAND_COLORS["Red"]};color:white;'
-            f'padding:5px 14px;border-radius:5px;font-weight:bold;margin-right:8px">'
-            f'⚠ Shelfware</span>'
-        )
-    if acct_row.get("flag_overage"):
-        badge_parts.append(
-            f'<span style="background:{BAND_COLORS["Green"]};color:white;'
-            f'padding:5px 14px;border-radius:5px;font-weight:bold;margin-right:8px">'
-            f'✓ Expansion Ready</span>'
-        )
-    months_in_window = int(acct_row.get("months_in_window", 0) or 0)
-    badge_parts.append(
-        f'<span style="background:#4A90D9;color:white;'
-        f'padding:5px 14px;border-radius:5px;font-weight:bold">'
-        f'Months in window: {months_in_window}</span>'
-    )
-    if not acct_row.get("shelfware_override") and not acct_row.get("flag_overage"):
-        badge_parts.insert(0,
-            f'<span style="background:#6c757d;color:white;'
-            f'padding:5px 14px;border-radius:5px;font-weight:bold;margin-right:8px">'
-            f'No active flags</span>'
-        )
-
-    st.markdown(" ".join(badge_parts), unsafe_allow_html=True)
-
     # ── Recommended next action ───────────────────────────────────────────────
     _shelfware = bool(acct_row.get("shelfware_override", False))
     _prs_band  = str(acct_row.get("prs_band", ""))
@@ -1948,6 +1898,72 @@ elif page == "By Account":
         f"{selected_company} in {selected_month.strftime('%B %Y')}. "
         "Confirm with CSM before initiating."
     )
+
+    st.divider()
+
+    # Row 3: 12-month trend (always full year for context)
+    st.subheader(f"{selected_company} — PRS trend 2024")
+
+    trend_acct = load_account_trend(selected_acct_id)
+    if not trend_acct.empty:
+        trend_acct["Month"] = pd.to_datetime(trend_acct["month"]).dt.strftime("%b")
+        fig_atrend = px.line(
+            trend_acct, x="Month", y=["prs", "deployment_score"],
+            markers=True,
+            color_discrete_map={"prs": "#1D9E75", "deployment_score": "#4A90D9"},
+            labels={"value": "Score (0–1)", "variable": ""},
+        )
+        fig_atrend.update_layout(
+            yaxis_range=[0, 1],
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            margin=dict(t=30, b=10),
+        )
+        fig_atrend.for_each_trace(lambda t: t.update(
+            name={"prs": "PRS", "deployment_score": "Deployment Score"}.get(t.name, t.name)
+        ))
+        if compare_mode:
+            fig_atrend.add_vline(
+                x=month_a.strftime("%b"), line_dash="dash", line_color="#4A90D9",
+                annotation_text=month_a.strftime("%b %Y"), annotation_position="top left",
+            )
+            fig_atrend.add_vline(
+                x=month_b.strftime("%b"), line_dash="dash", line_color="#1D9E75",
+                annotation_text=month_b.strftime("%b %Y"), annotation_position="top right",
+            )
+        st.plotly_chart(fig_atrend, use_container_width=True)
+
+    st.divider()
+
+    # Row 4: Flags
+    st.subheader("Flags")
+
+    badge_parts = []
+    if acct_row.get("shelfware_override"):
+        badge_parts.append(
+            f'<span style="background:{BAND_COLORS["Red"]};color:white;'
+            f'padding:5px 14px;border-radius:5px;font-weight:bold;margin-right:8px">'
+            f'⚠ Shelfware</span>'
+        )
+    if acct_row.get("flag_overage"):
+        badge_parts.append(
+            f'<span style="background:{BAND_COLORS["Green"]};color:white;'
+            f'padding:5px 14px;border-radius:5px;font-weight:bold;margin-right:8px">'
+            f'✓ Expansion Ready</span>'
+        )
+    months_in_window = int(acct_row.get("months_in_window", 0) or 0)
+    badge_parts.append(
+        f'<span style="background:#4A90D9;color:white;'
+        f'padding:5px 14px;border-radius:5px;font-weight:bold">'
+        f'Months in window: {months_in_window}</span>'
+    )
+    if not acct_row.get("shelfware_override") and not acct_row.get("flag_overage"):
+        badge_parts.insert(0,
+            f'<span style="background:#6c757d;color:white;'
+            f'padding:5px 14px;border-radius:5px;font-weight:bold;margin-right:8px">'
+            f'No active flags</span>'
+        )
+
+    st.markdown(" ".join(badge_parts), unsafe_allow_html=True)
 
     st.caption(CAPTION)
 
