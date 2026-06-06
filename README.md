@@ -1,12 +1,15 @@
 # Realized ARR — North Star Metric for GCS
 
-**Author:** Dharmesh Bhagat · Principal PM, Centralized Data & AI / Analytics
+**Author:** Dharmesh Bhagat, Principal PM
 **Project:** GCS transition from TCV to ARR + Consumption model
 **Stack:** Python · Google BigQuery · Streamlit · Claude Code (spec-driven development)
 **Data:** Synthetic dataset — 1,000 accounts · 12 months · ~250K rows
 
 > **Note:** All data in this repository is synthetically generated for demonstration purposes.
 > No real customer, financial, or operational data is included.
+
+> **Note:** Realized ARR is an operating metric for customer value realization. It is not
+> intended to represent GAAP revenue recognition or official financial reporting.
 
 ---
 
@@ -28,11 +31,13 @@ Connected to BigQuery dataset: `gcs_north_star`
 ## What this project does
 
 GCS currently measures success through Total Contract Value (TCV) — a model
-that treats a contract signature as an immediate win. This creates a dangerous blind spot:
-a $500K shelfware account and a $500K fully-deployed account look identical until renewal.
+that treats a contract signature as an immediate win. This can create a material
+blind spot: a $500K shelfware account and a $500K fully-deployed account look
+identical until renewal.
 
-This project defines, implements, and validates **Realized ARR** — a metric that measures
-how much contracted ARR is actively being converted into healthy, sustained product usage.
+This project defines, implements, and validates **Realized ARR** — a metric that
+measures how much contracted ARR is actively being converted into healthy, sustained
+product usage.
 
 ```
 Realized ARR = Contracted ARR × PRS
@@ -49,6 +54,34 @@ Override: IF Deployment = 0 AND Sustained = 0 → PRS = 0.00
 **Key finding (Synthetic December 2024 portfolio):**
 $86.3M contracted · $56.3M realized · **$30M unrealized gap** identified at account level.
 Portfolio PRS peaked at 0.706 in June and declined to 0.652 by December.
+
+---
+
+## Product judgment: why an explainable score first?
+
+For the MVP, I intentionally used a transparent weighted score instead of a
+black-box ML model.
+
+Reason:
+- The metric may influence executive decisions and future compensation design.
+- CS, Sales, and Finance leaders need to understand why an account is marked
+  healthy, at-risk, or expansion-ready.
+- Data quality and lifecycle-stage exceptions must be visible before automation.
+- Predictive churn and expansion propensity models are better suited for Phase 2
+  after the baseline metric is trusted.
+
+---
+
+## Recommended rollout
+
+This prototype should not directly replace compensation metrics on day one.
+
+Recommended path:
+1. Run Realized ARR as a shadow North Star metric for one quarter.
+2. Compare against current ARR, TCV, renewal, support, and account-health outcomes.
+3. Tune PRS weights with Customer Success, Solutions Consulting, Finance, and Data/AI.
+4. Establish data-confidence and exception-handling thresholds.
+5. Introduce into compensation only after behavior impact is validated.
 
 ---
 
@@ -335,9 +368,9 @@ The BRD documents are particularly important for context:
   and agentic workflows.
 
 - **BRD_v3_Roundtable_Validated.md** — Includes a CS Leaders Roundtable (June 2025)
-  signal map that validates each metric component against real CS leader feedback.
-  The roundtable confirmed the 40/30/20/10 weight structure and the dollar-denominated
-  Realized ARR framing as the right design for CS and Sales alignment.
+  signal map that validated the importance of balancing deployment, sustained usage,
+  technical health, and expansion signals. That feedback supported the 40/30/20/10
+  MVP weighting used in this prototype.
 
 ---
 
