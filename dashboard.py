@@ -236,8 +236,8 @@ def _fmt(val: float) -> str:
 
 
 def _go_to_account(account_id: str) -> None:
-    st.session_state["nav_page"] = "By Account"
-    st.session_state["preselected_account"] = account_id
+    st.session_state["selected_account"] = account_id
+    st.session_state["pending_nav"] = "By Account"
     st.rerun()
 
 
@@ -247,13 +247,22 @@ st.set_page_config(page_title="PANW GCS North Star", layout="wide")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
+_PAGES = ["Portfolio", "By Region", "By Rep", "By Account"]
+
+# Resolve pending navigation BEFORE the radio widget renders
+if "pending_nav" in st.session_state:
+    _nav_default = _PAGES.index(st.session_state.pop("pending_nav"))
+else:
+    _nav_default = _PAGES.index(st.session_state.get("nav_page", "Portfolio"))
+
 with st.sidebar:
     st.title("PANW GCS\nNorth Star")
     st.divider()
 
     page = st.radio(
         "Navigation",
-        ["Portfolio", "By Region", "By Rep", "By Account"],
+        _PAGES,
+        index=_nav_default,
         key="nav_page",
     )
 
@@ -535,6 +544,7 @@ elif page == "By Rep":
     rep_df = compute_rep_metrics(_filtered_accts)
     rep_df = rep_df.merge(total_counts.reset_index(), on="rep_id", how="left")
     rep_df["total_count"] = rep_df["total_count"].fillna(0).astype(int)
+    rep_df = rep_df.reset_index(drop=True)  # keep iloc indices stable for on_select
 
     st.subheader("Rep Performance  (worst PRS first)")
 
@@ -558,23 +568,43 @@ elif page == "By Rep":
     tbl["Contracted ARR"] = tbl["Contracted ARR"].apply(_fmt)
     tbl["Realized ARR"]   = tbl["Realized ARR"].apply(_fmt)
     tbl["At-Risk ARR"]    = tbl["At-Risk ARR"].apply(_fmt)
+    tbl.insert(0, "", "→")
 
-    def _rep_row_style(row):
-        prs = row["PRS%"]
-        if prs < 30:
-            return [f"background-color: {BAND_COLORS['Red']}; color: white"] * len(row)
-        if prs < 60:
-            return [f"background-color: {BAND_COLORS['Orange']}; color: white"] * len(row)
-        return [""] * len(row)
+    rep_selection = st.dataframe(
+        tbl,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="rep_table",
+    )
 
-    st.dataframe(tbl.style.apply(_rep_row_style, axis=1), use_container_width=True, hide_index=True)
+    if rep_selection.selection.rows:
+        clicked_rep = rep_df.iloc[rep_selection.selection.rows[0]]["rep_name"]
+        st.session_state["rep_drill_selection"] = clicked_rep
+
+    st.caption("Click a row to populate the drill-down below")
 
     st.divider()
     st.subheader("Account Detail")
 
-    rep_options = dict(zip(rep_df["rep_name"], rep_df["rep_id"]))
-    selected_rep_name = st.selectbox("Select Rep", list(rep_options.keys()))
-    selected_rep_id   = rep_options[selected_rep_name]
+    rep_name_to_id = dict(zip(rep_df["rep_name"], rep_df["rep_id"]))
+    rep_name_opts  = rep_df["rep_name"].tolist()
+    rep_drill_default = st.session_state.get("rep_drill_selection")
+    rep_default_idx   = (
+        rep_name_opts.index(rep_drill_default)
+        if rep_drill_default in rep_name_opts
+        else 0
+    )
+
+    selected_rep_name = st.selectbox(
+        "Select Rep",
+        options=rep_name_opts,
+        index=rep_default_idx,
+        key="rep_selectbox",
+    )
+    st.session_state["rep_drill_selection"] = selected_rep_name
+    selected_rep_id = rep_name_to_id[selected_rep_name]
 
     acct = apply_filters(load_account_detail(month_str, selected_rep_id))
 
@@ -625,12 +655,16 @@ elif page == "By Account":
         st.warning("No accounts match the current sidebar filters.")
         st.stop()
 
+    # Sorted once; row indices here match what on_select returns
+    _sorted_accts = _filtered_accts.sort_values("prs").reset_index(drop=True)
+    acct_id_map   = dict(zip(_sorted_accts["company_name"], _sorted_accts["account_id"]))
+
     display_cols = [
         "company_name", "industry", "region", "rep_name", "segment",
         "contracted_arr", "realized_arr", "prs", "prs_band",
         "shelfware_override", "flag_overage",
     ]
-    tbl_acct = _filtered_accts.sort_values("prs")[display_cols].copy()
+    tbl_acct = _sorted_accts[display_cols].copy()
     tbl_acct.columns = [
         "Company", "Industry", "Region", "Rep", "Segment",
         "Contracted ARR", "Realized ARR", "PRS", "Band",
@@ -639,27 +673,54 @@ elif page == "By Account":
     tbl_acct["Contracted ARR"] = tbl_acct["Contracted ARR"].apply(_fmt)
     tbl_acct["Realized ARR"]   = tbl_acct["Realized ARR"].apply(_fmt)
     tbl_acct["PRS"] = tbl_acct["PRS"].round(4)
+    tbl_acct.insert(0, "", "→")
 
-    st.dataframe(tbl_acct, use_container_width=True, hide_index=True)
-    st.caption(f"{_n_filtered:,} accounts shown · Use sidebar filters to narrow")
+    selection = st.dataframe(
+        tbl_acct,
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="account_table",
+    )
+
+    # Row click → update drill selection
+    if selection.selection.rows:
+        clicked_name = _sorted_accts.iloc[selection.selection.rows[0]]["company_name"]
+        st.session_state["account_drill_selection"] = clicked_name
+
+    st.caption(
+        f"{_n_filtered:,} accounts shown · Click a row to populate the drill-down below"
+    )
 
     st.divider()
     st.subheader("Account drill-down")
 
-    acct_names  = _filtered_accts["company_name"].tolist()
-    acct_id_map = dict(zip(_filtered_accts["company_name"], _filtered_accts["account_id"]))
-    default_idx = 0
-    presel = st.session_state.pop("preselected_account", None)
-    if presel:
-        id_to_name = {v: k for k, v in acct_id_map.items()}
-        if presel in id_to_name and id_to_name[presel] in acct_names:
-            default_idx = acct_names.index(id_to_name[presel])
+    # Navigation pre-selection from By Rep (account_id → company_name)
+    if "selected_account" in st.session_state:
+        _id_to_name = dict(zip(_sorted_accts["account_id"], _sorted_accts["company_name"]))
+        _presel_name = _id_to_name.get(st.session_state.pop("selected_account"))
+        if _presel_name:
+            st.session_state["account_drill_selection"] = _presel_name
+
+    account_options = _sorted_accts["company_name"].tolist()
+    drill_default   = st.session_state.get("account_drill_selection")
+    default_idx     = (
+        account_options.index(drill_default)
+        if drill_default in account_options
+        else 0
+    )
 
     selected_company = st.selectbox(
-        "Select an account to inspect", options=acct_names, index=default_idx
+        "Select an account to inspect",
+        options=account_options,
+        index=default_idx,
+        key="account_selectbox",
     )
+    st.session_state["account_drill_selection"] = selected_company
+
     selected_acct_id = acct_id_map[selected_company]
-    acct_row = _filtered_accts[_filtered_accts["account_id"] == selected_acct_id].iloc[0]
+    acct_row = _sorted_accts[_sorted_accts["account_id"] == selected_acct_id].iloc[0]
 
     st.divider()
 
