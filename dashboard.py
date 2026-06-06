@@ -27,10 +27,6 @@ COMPONENT_COLORS = {
     "Expansion × 0.10":  "#27AE60",
 }
 
-ALL_MONTHS = [datetime.date(2024, m, 1) for m in range(1, 13)]
-MONTH_LABELS = [m.strftime("%B %Y") for m in ALL_MONTHS]
-MONTH_BY_LABEL = {m.strftime("%B %Y"): m for m in ALL_MONTHS}
-
 CAPTION = "Data source: BigQuery gcs_north_star · Refreshes every 10 minutes"
 
 
@@ -116,20 +112,13 @@ def load_account_list(month: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=600)
 def load_all_months_accounts() -> pd.DataFrame:
-    """All 12 months of account-level data — used for filtered Portfolio trend."""
+    """All 12 months — used for the filtered Portfolio trend."""
     return _run(
         """
         SELECT
-            r.month,
-            r.account_id,
-            a.company_name,
-            r.industry,
-            r.region,
-            r.segment,
-            r.rep_id,
-            r.rep_name,
-            r.contracted_arr,
-            r.realized_arr,
+            r.month, r.account_id, a.company_name,
+            r.industry, r.region, r.segment, r.rep_id, r.rep_name,
+            r.contracted_arr, r.realized_arr,
             CAST(r.prs AS FLOAT64) AS prs,
             r.prs_band
         FROM `{PROJECT_ID}.{DATASET_ID}.realized_arr_monthly` r
@@ -189,13 +178,12 @@ def load_account_trend(account_id: str) -> pd.DataFrame:
 # ── Python aggregation helpers ────────────────────────────────────────────────
 
 def _arr_weighted_prs(df: pd.DataFrame, group_col: str) -> pd.DataFrame:
-    d = df.assign(_prs_x_arr=df["prs"] * df["contracted_arr"].astype(float))
+    d = df.assign(_w=df["prs"] * df["contracted_arr"].astype(float))
     g = d.groupby(group_col).agg(
-        _prs_num=("_prs_x_arr", "sum"),
-        _prs_den=("contracted_arr", "sum"),
+        _num=("_w", "sum"), _den=("contracted_arr", "sum")
     ).reset_index()
     g["portfolio_prs_pct"] = (
-        g["_prs_num"] / g["_prs_den"].replace(0, float("nan")) * 100
+        g["_num"] / g["_den"].replace(0, float("nan")) * 100
     ).round(2)
     return g[[group_col, "portfolio_prs_pct"]]
 
@@ -204,9 +192,7 @@ def _at_risk_arr(df: pd.DataFrame, group_col: str) -> pd.DataFrame:
     return (
         df[df["prs_band"].isin(["Red", "Orange"])]
         .groupby(group_col)["contracted_arr"]
-        .sum()
-        .rename("at_risk_arr")
-        .reset_index()
+        .sum().rename("at_risk_arr").reset_index()
     )
 
 
@@ -238,40 +224,6 @@ def compute_rep_metrics(df: pd.DataFrame) -> pd.DataFrame:
               .merge(_at_risk_arr(df, "rep_id"),       on="rep_id", how="left"))
     result["at_risk_arr"] = result["at_risk_arr"].fillna(0)
     return result.sort_values("portfolio_prs_pct")
-
-
-# ── Filter helpers ────────────────────────────────────────────────────────────
-
-def apply_account_filters(
-    df: pd.DataFrame,
-    search: str,
-    bands: list[str],
-    industries: list[str],
-    segment: str,
-    regions: list[str],
-) -> pd.DataFrame:
-    if search and "company_name" in df.columns:
-        df = df[df["company_name"].str.contains(search, case=False, na=False)]
-    if bands and "prs_band" in df.columns:
-        df = df[df["prs_band"].isin(bands)]
-    if industries and "industry" in df.columns:
-        df = df[df["industry"].isin(industries)]
-    if segment != "All" and "segment" in df.columns:
-        df = df[df["segment"] == segment]
-    if regions and "All" not in regions and "region" in df.columns:
-        df = df[df["region"].isin(regions)]
-    return df
-
-
-def _filters_active(search: str, bands: list, industries: list,
-                    segment: str, regions: list) -> bool:
-    return bool(
-        search
-        or bands
-        or industries
-        or segment != "All"
-        or (regions and "All" not in regions)
-    )
 
 
 # ── Formatting / navigation helpers ──────────────────────────────────────────
@@ -307,17 +259,30 @@ with st.sidebar:
 
     st.divider()
 
-    month_label = st.selectbox("Month", MONTH_LABELS, index=11)
-    selected_month = MONTH_BY_LABEL[month_label]
-    month_str = selected_month.isoformat()
+    # Dynamic months from portfolio_summary (cached)
+    _trend_df  = load_portfolio_trend()
+    all_months = sorted(pd.to_datetime(_trend_df["month"]).dt.date.tolist())
 
-    selected_regions = st.multiselect(
-        "Region",
-        options=["All", "North America", "EMEA", "APAC", "LATAM"],
-        default=["All"],
+    selected_month = st.selectbox(
+        "Month",
+        options=all_months,
+        index=len(all_months) - 1,
+        format_func=lambda x: x.strftime("%b %Y"),
     )
+    month_str   = selected_month.isoformat()
+    month_label = selected_month.strftime("%B %Y")
 
-    selected_segment = st.radio("Segment", ["All", "Enterprise", "Mid-Market"])
+    # Load current-month accounts to populate region/industry options
+    _month_accts = load_account_list(month_str)
+
+    _region_opts = ["All Regions"] + sorted(
+        _month_accts["region"].dropna().unique().tolist()
+    )
+    selected_region = st.selectbox("Region", _region_opts, index=0)
+
+    selected_segment = st.selectbox(
+        "Segment", ["All Segments", "Enterprise", "Mid-Market"], index=0
+    )
 
     st.divider()
     st.markdown("**Account filters**")
@@ -326,40 +291,50 @@ with st.sidebar:
         "Search company", placeholder="e.g. Apex", key="search_company"
     )
 
-    selected_bands = st.multiselect(
+    selected_band = st.selectbox(
         "Health band",
-        options=BAND_ORDER,
-        default=[],
-        placeholder="All bands",
-        key="selected_bands",
+        ["All Bands"] + BAND_ORDER,
+        index=0,
     )
 
-    # Populate industry options from the current month's account list (cached)
-    _month_accts = load_account_list(month_str)
-    _industry_opts = sorted(_month_accts["industry"].dropna().unique().tolist())
-    selected_industries = st.multiselect(
-        "Industry",
-        options=_industry_opts,
-        default=[],
-        placeholder="All industries",
-        key="selected_industries",
+    _industry_opts = ["All Industries"] + sorted(
+        _month_accts["industry"].dropna().unique().tolist()
+    )
+    selected_industry = st.selectbox("Industry", _industry_opts, index=0)
+
+
+# ── Filter helpers (closures over sidebar values) ─────────────────────────────
+
+def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
+    if search_company and "company_name" in df.columns:
+        df = df[df["company_name"].str.contains(search_company, case=False, na=False)]
+    if selected_band != "All Bands" and "prs_band" in df.columns:
+        df = df[df["prs_band"] == selected_band]
+    if selected_industry != "All Industries" and "industry" in df.columns:
+        df = df[df["industry"] == selected_industry]
+    if selected_segment != "All Segments" and "segment" in df.columns:
+        df = df[df["segment"] == selected_segment]
+    if selected_region != "All Regions" and "region" in df.columns:
+        df = df[df["region"] == selected_region]
+    return df
+
+
+def _filters_active() -> bool:
+    return bool(
+        search_company
+        or selected_band     != "All Bands"
+        or selected_industry != "All Industries"
+        or selected_segment  != "All Segments"
+        or selected_region   != "All Regions"
     )
 
 
-# Precompute filter state used by every page
-_FA = _filters_active(
-    search_company, selected_bands, selected_industries,
-    selected_segment, selected_regions
-)
-
-# Filtered account list for the selected month (cache hit after sidebar)
-_all_accts = load_account_list(month_str)
-_filtered_accts = apply_account_filters(
-    _all_accts, search_company, selected_bands,
-    selected_industries, selected_segment, selected_regions
-)
-_n_total    = len(_all_accts)
-_n_filtered = len(_filtered_accts)
+# Precompute once — all pages use these
+_FA             = _filters_active()
+_all_accts      = load_account_list(month_str)
+_filtered_accts = apply_filters(_all_accts)
+_n_total        = len(_all_accts)
+_n_filtered     = len(_filtered_accts)
 
 
 def _filter_banner() -> None:
@@ -376,7 +351,6 @@ if page == "Portfolio":
     _filter_banner()
 
     if _FA:
-        # Filtered path — compute metrics from account-level data
         if _filtered_accts.empty:
             st.warning("No accounts match the current filters.")
             st.stop()
@@ -385,7 +359,6 @@ if page == "Portfolio":
         gap        = contracted - realized
         rate_pct   = round(realized / contracted * 100, 2) if contracted else 0.0
     else:
-        # Fast path — pre-aggregated portfolio_summary
         ps = load_portfolio_summary(month_str)
         if ps.empty:
             st.warning("No portfolio data for the selected month.")
@@ -451,11 +424,7 @@ if page == "Portfolio":
     st.subheader("Realized ARR trend")
 
     if _FA:
-        all_yr = load_all_months_accounts()
-        filt_yr = apply_account_filters(
-            all_yr, search_company, selected_bands,
-            selected_industries, selected_segment, selected_regions
-        )
+        filt_yr = apply_filters(load_all_months_accounts())
         trend = (
             filt_yr.groupby("month")
             .agg(contracted_arr=("contracted_arr", "sum"),
@@ -465,12 +434,12 @@ if page == "Portfolio":
         )
         trend["Contracted ARR ($M)"] = trend["contracted_arr"].astype(float) / 1e6
         trend["Realized ARR ($M)"]   = trend["realized_arr"].astype(float)   / 1e6
-        trend["Month"] = pd.to_datetime(trend["month"]).dt.strftime("%b")
     else:
         trend = load_portfolio_trend()
         trend["Contracted ARR ($M)"] = trend["total_contracted_arr"].astype(float) / 1e6
         trend["Realized ARR ($M)"]   = trend["total_realized_arr"].astype(float)   / 1e6
-        trend["Month"] = pd.to_datetime(trend["month"]).dt.strftime("%b")
+
+    trend["Month"] = pd.to_datetime(trend["month"]).dt.strftime("%b")
 
     fig_trend = px.line(
         trend, x="Month",
@@ -508,7 +477,6 @@ elif page == "By Region":
     realized_total   = _filtered_accts["realized_arr"].astype(float).sum()
     portfolio_avg    = (realized_total / contracted_total * 100) if contracted_total else 0.0
 
-    # ── Section A: Side-by-side bar charts ───────────────────────────────────
     col1, col2 = st.columns(2)
 
     with col1:
@@ -537,17 +505,11 @@ elif page == "By Region":
         st.plotly_chart(fig_prs, use_container_width=True)
 
     st.divider()
-
-    # ── Section B: Region summary table ──────────────────────────────────────
     st.subheader("Region Summary  (worst PRS first)")
 
     tbl = region_df.rename(columns={
-        "region":           "Region",
-        "accounts":         "Accounts",
-        "Contracted ARR ($M)": "Contracted ARR ($M)",
-        "Realized ARR ($M)":   "Realized ARR ($M)",
-        "portfolio_prs_pct":   "PRS%",
-        "at_risk_arr":         "At-Risk ARR",
+        "region": "Region", "accounts": "Accounts",
+        "portfolio_prs_pct": "PRS%", "at_risk_arr": "At-Risk ARR",
     })[["Region", "Accounts", "Contracted ARR ($M)", "Realized ARR ($M)", "PRS%", "At-Risk ARR"]].copy()
     tbl["Contracted ARR ($M)"] = tbl["Contracted ARR ($M)"].round(1)
     tbl["Realized ARR ($M)"]   = tbl["Realized ARR ($M)"].round(1)
@@ -569,13 +531,11 @@ elif page == "By Rep":
         st.warning("No accounts match the current filters.")
         st.stop()
 
-    # Compute rep metrics from filtered accounts; keep total counts for comparison
     total_counts = _all_accts.groupby("rep_id")["account_id"].count().rename("total_count")
     rep_df = compute_rep_metrics(_filtered_accts)
     rep_df = rep_df.merge(total_counts.reset_index(), on="rep_id", how="left")
     rep_df["total_count"] = rep_df["total_count"].fillna(0).astype(int)
 
-    # ── Section A: Rep performance table ─────────────────────────────────────
     st.subheader("Rep Performance  (worst PRS first)")
 
     tbl = rep_df.copy()
@@ -585,13 +545,13 @@ elif page == "By Rep":
         tbl["Accounts"] = tbl["account_count"].astype(str)
 
     tbl = tbl.rename(columns={
-        "rep_name":            "Rep Name",
-        "region":              "Region",
-        "segment":             "Segment",
-        "total_contracted_arr":"Contracted ARR",
-        "total_realized_arr":  "Realized ARR",
-        "portfolio_prs_pct":   "PRS%",
-        "at_risk_arr":         "At-Risk ARR",
+        "rep_name":             "Rep Name",
+        "region":               "Region",
+        "segment":              "Segment",
+        "total_contracted_arr": "Contracted ARR",
+        "total_realized_arr":   "Realized ARR",
+        "portfolio_prs_pct":    "PRS%",
+        "at_risk_arr":          "At-Risk ARR",
     })[["Rep Name", "Region", "Segment", "Accounts",
         "Contracted ARR", "Realized ARR", "PRS%", "At-Risk ARR"]]
 
@@ -610,23 +570,13 @@ elif page == "By Rep":
     st.dataframe(tbl.style.apply(_rep_row_style, axis=1), use_container_width=True, hide_index=True)
 
     st.divider()
-
-    # ── Section B: Rep drill-down ─────────────────────────────────────────────
     st.subheader("Account Detail")
 
     rep_options = dict(zip(rep_df["rep_name"], rep_df["rep_id"]))
     selected_rep_name = st.selectbox("Select Rep", list(rep_options.keys()))
     selected_rep_id   = rep_options[selected_rep_name]
 
-    acct = load_account_detail(month_str, selected_rep_id)
-
-    # Apply active account filters to the detail table
-    if search_company and "company_name" in acct.columns:
-        acct = acct[acct["company_name"].str.contains(search_company, case=False, na=False)]
-    if selected_bands and "prs_band" in acct.columns:
-        acct = acct[acct["prs_band"].isin(selected_bands)]
-    if selected_industries and "industry" in acct.columns:
-        acct = acct[acct["industry"].isin(selected_industries)]
+    acct = apply_filters(load_account_detail(month_str, selected_rep_id))
 
     if acct.empty:
         st.info("No accounts match the current filters for this rep.")
@@ -640,9 +590,8 @@ elif page == "By Rep":
         ]
 
         def _band_row_style(row):
-            band = row["Band"]
-            color = BAND_COLORS.get(band)
-            if color and band in ("Red", "Orange"):
+            color = BAND_COLORS.get(row["Band"])
+            if color and row["Band"] in ("Red", "Orange"):
                 return [f"background-color: {color}; color: white"] * len(row)
             return [""] * len(row)
 
@@ -654,9 +603,7 @@ elif page == "By Rep":
         st.divider()
         acct_name_to_id = dict(zip(acct["company_name"], acct["account_id"]))
         drill_name = st.selectbox(
-            "Drill into account →",
-            options=list(acct_name_to_id.keys()),
-            key="rep_drill_select",
+            "Drill into account →", list(acct_name_to_id.keys()), key="rep_drill_select"
         )
         if st.button("Open in By Account", key="rep_drill_btn"):
             _go_to_account(acct_name_to_id[drill_name])
@@ -672,7 +619,6 @@ elif page == "By Account":
     st.header(f"Account Detail — {month_label}")
     _filter_banner()
 
-    # ── Section A: Filtered account table ────────────────────────────────────
     st.subheader("Accounts")
 
     if _filtered_accts.empty:
@@ -698,8 +644,6 @@ elif page == "By Account":
     st.caption(f"{_n_filtered:,} accounts shown · Use sidebar filters to narrow")
 
     st.divider()
-
-    # ── Section B: Account drill-down ────────────────────────────────────────
     st.subheader("Account drill-down")
 
     acct_names  = _filtered_accts["company_name"].tolist()
@@ -756,7 +700,7 @@ elif page == "By Account":
 
     st.divider()
 
-    # Row 3: 12-month trend
+    # Row 3: 12-month trend (always full year for context)
     st.subheader(f"{selected_company} — PRS trend 2024")
 
     trend_acct = load_account_trend(selected_acct_id)
