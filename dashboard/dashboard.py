@@ -165,9 +165,9 @@ def help_icon(key: str) -> None:
             "body": (
                 "Accounts consuming 120%+ of their included credits "
                 "consistently for 3 or more months.\n\n"
-                "This is a positive signal — the customer has outgrown "
-                "their current contract and is ready for an upsell or "
-                "right-sizing conversation.\n\n"
+                "This can be a positive signal when technical health "
+                "is strong. If health is degraded, resolve technical "
+                "friction before expansion.\n\n"
                 "Expansion Momentum = 1.00 for these accounts.  \n"
                 "flag_overage = True in the data."
             ),
@@ -1549,7 +1549,9 @@ elif page == "By Region":
         st.caption(
             "**DQ note:** Region roll-ups exclude accounts where `included_monthly_compute_credits = 0` "
             "(DQ-004) and accounts with orphaned or pre-2024 usage logs (DQ-001/DQ-002). "
-            "At-Risk ARR reflects unrealized gap for accounts with PRS < 0.70 only. "
+            "At-Risk ARR reflects contracted ARR for Orange and Red "
+            "accounts (PRS < 0.60), not the unrealized gap. "
+            "Use the portfolio gap for the realized-vs-contracted delta. "
             "See the Data Quality page for full exclusion counts."
         )
 
@@ -2022,7 +2024,7 @@ elif page == "Data Quality":
     st.caption(
         f"{_clean:,} clean logs of {_total_raw:,} total · "
         f"{conf['orphaned_logs']:,} orphaned (DQ-001) · "
-        f"{conf['rogue_logs']:,} pre-contract (DQ-002) · "
+        f"{conf['rogue_logs']:,} pre-period / rogue date (DQ-002) · "
         f"{conf['negative_logs']:,} negative values (DQ-005)"
     )
 
