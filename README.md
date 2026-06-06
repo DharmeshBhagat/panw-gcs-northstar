@@ -1,4 +1,4 @@
-# Realized ARR — North Star Metric for Palo Alto Networks GCS
+# Realized ARR — North Star Metric for GCS
 
 **Author:** Dharmesh Bhagat · Principal PM, Centralized Data & AI / Analytics
 **Project:** GCS transition from TCV to ARR + Consumption model
@@ -6,13 +6,28 @@
 **Data:** Synthetic dataset — 1,000 accounts · 12 months · ~250K rows
 
 > **Note:** All data in this repository is synthetically generated for demonstration purposes.
-> No real Palo Alto Networks customer data is included.
+> No real customer, financial, or operational data is included.
+
+---
+
+## Live dashboard
+
+🔗 **[https://dbhagatnsdemo.streamlit.app/](https://dbhagatnsdemo.streamlit.app/)**
+
+Deployed on Streamlit Cloud — no setup required. Open in any browser.
+Connected to BigQuery dataset: `gcs_north_star`
+
+---
+
+## GitHub repository
+
+🔗 **[https://github.com/DharmeshBhagat/panw-gcs-northstar](https://github.com/DharmeshBhagat/panw-gcs-northstar)**
 
 ---
 
 ## What this project does
 
-Palo Alto Networks GCS currently measures success through Total Contract Value (TCV) — a model
+GCS currently measures success through Total Contract Value (TCV) — a model
 that treats a contract signature as an immediate win. This creates a dangerous blind spot:
 a $500K shelfware account and a $500K fully-deployed account look identical until renewal.
 
@@ -49,7 +64,8 @@ Portfolio PRS peaked at 0.706 in June and declined to 0.652 by December.
 | Run the data generation | `data_generation/generate_dataset.py` |
 | Run the metric pipeline | `pipeline_and_tests/pipeline/run_pipeline.py` |
 | Run the test suite | `pipeline_and_tests/tests/` |
-| Launch the dashboard | `dashboard/dashboard.py` |
+| Launch the dashboard locally | `dashboard/dashboard.py` |
+| View the dashboard live | https://dbhagatnsdemo.streamlit.app/ |
 | See the executive presentation | `presentation/` |
 
 ---
@@ -110,11 +126,13 @@ panw-gcs-northstar/
 ├── dashboard/
 │   └── dashboard.py                   # Streamlit app — 6 pages with sidebar filters,
 │                                      #   row-click navigation, help tooltips
+│                                      #   Live: https://dbhagatnsdemo.streamlit.app/
 │
 ├── presentation/
-│   ├── PANW_GCS_Realized_ARR_Presentation.pptx
-│   └── PANW_GCS_Realized_ARR_Presentation.pdf
+│   ├── GCS_Realized_ARR_Presentation.pptx
+│   └── GCS_Realized_ARR_Presentation.pdf
 │
+├── requirements.txt                   # Root requirements for Streamlit Cloud deployment
 ├── .env.example                       # Environment variable template
 ├── .gitignore
 └── README.md
@@ -125,7 +143,7 @@ panw-gcs-northstar/
 ## Prerequisites
 
 - Python 3.11+
-- Google Cloud account with BigQuery enabled (billing recommended — DML requires it)
+- Google Cloud account with BigQuery enabled (billing required — DML needs it)
 - `gcloud` CLI installed and authenticated
 
 ---
@@ -134,11 +152,11 @@ panw-gcs-northstar/
 
 **1. Clone and create environment**
 ```bash
-git clone https://github.com/YOUR_USERNAME/panw-gcs-northstar.git
+git clone https://github.com/DharmeshBhagat/panw-gcs-northstar.git
 cd panw-gcs-northstar
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r data_generation/requirements.txt
+pip install -r requirements.txt
 ```
 
 **2. Authenticate with Google Cloud**
@@ -205,12 +223,12 @@ python pipeline_and_tests/pipeline/run_pipeline.py --month 2024-12-01
 
 ```bash
 BIGQUERY_PROJECT_ID=your-gcp-project-id \
-  pytest pipeline_and_tests/tests/ -v
+  .venv/bin/pytest pipeline_and_tests/tests/ -v
 ```
 
 Expected: **22/22 passed** · See `pipeline_and_tests/test_results.txt`
 
-### Step 5 — Launch the dashboard
+### Step 5 — Launch the dashboard locally
 
 ```bash
 BIGQUERY_PROJECT_ID=your-gcp-project-id \
@@ -219,17 +237,20 @@ BIGQUERY_PROJECT_ID=your-gcp-project-id \
 
 Opens at [http://localhost:8501](http://localhost:8501)
 
+Or use the live deployed version — no setup needed:
+**[https://dbhagatnsdemo.streamlit.app/](https://dbhagatnsdemo.streamlit.app/)**
+
 ---
 
 ## Dashboard pages
 
 | Page | Title | What it shows |
 |------|-------|---------------|
-| **Home** | Realized ARR Scorecard | Recommendation banner · $30M gap · PRS components · Recover ARR / Expand ARR action columns · Decision ask |
-| **Portfolio** | Portfolio View | Monthly trend Jan–Dec · Dynamic insight paragraph · Jan/Jun/Dec milestone table |
+| **Home** | Realized ARR Scorecard | Recommendation banner · $30M gap · PRS components · Recover ARR / Expand ARR · Decision ask |
+| **Portfolio** | Portfolio View | Monthly trend Jan–Dec · Dynamic insight · Jan/Jun/Dec milestone table |
 | **By Region** | By Region | Realized ARR + PRS% per region · So-what line · Recommended Action column |
-| **By Rep** | CSM / Rep Realization View — Shadow Metric | Rep leaderboard with shadow disclaimer · Coaching framing · Drill-down to accounts |
-| **By Account** | By Account | Company search · Row-click drill-down · PRS waterfall · Recommended Next Action box · 12-month trend |
+| **By Rep** | CSM / Rep Realization View — Shadow Metric | Rep leaderboard · Shadow disclaimer · Coaching framing · Drill-down to accounts |
+| **By Account** | By Account | Company search · Row-click drill-down · PRS waterfall · Recommended Next Action · 12-month trend |
 | **Data Quality** | Data Quality Monitor | Data Confidence % · DQ rule breakdown · Anomaly counts · Pipeline status |
 
 All pages share sidebar filters: Month · Region · Segment · Health Band · Industry · Company search.
@@ -281,6 +302,7 @@ Steps 1–6: Metric computation (per account × month)
   → dq_report               append-only audit log
   ↓
 Streamlit dashboard — 6 pages
+  → Live: https://dbhagatnsdemo.streamlit.app/
 ```
 
 ---
@@ -355,4 +377,4 @@ The BRD documents are particularly important for context:
 ## License
 
 This project uses synthetic data generated for demonstration purposes only.
-No real Palo Alto Networks customer, financial, or operational data is included.
+No real customer, financial, or operational data is included.
