@@ -30,6 +30,228 @@ COMPONENT_COLORS = {
 CAPTION = "Data source: BigQuery gcs_north_star · Refreshes every 10 minutes"
 
 
+# ── Contextual help popovers ──────────────────────────────────────────────────
+
+def help_icon(key: str) -> None:
+    """Renders a ⓘ button that opens a popover with explanation."""
+    definitions = {
+        "prs": {
+            "title": "Platform Realization Score (PRS)",
+            "body": (
+                "A composite score from 0.0 to 1.0 measuring how much "
+                "contracted value is being realized through active usage.\n\n"
+                "**Formula:**\n"
+                "```\n"
+                "PRS = (Deployment × 0.40)\n"
+                "    + (Sustained Usage × 0.30)\n"
+                "    + (Technical Health × 0.20)\n"
+                "    + (Expansion Momentum × 0.10)\n"
+                "```\n"
+                "🟢 0.80–1.00 Green — Healthy  \n"
+                "🟡 0.60–0.79 Yellow — Watch  \n"
+                "🟠 0.30–0.59 Orange — At-Risk  \n"
+                "🔴 0.00–0.29 Red — Critical"
+            ),
+        },
+        "realized_arr": {
+            "title": "Realized ARR",
+            "body": (
+                "The dollar value of contracted ARR actually being earned "
+                "through healthy, deployed, sustained product usage.\n\n"
+                "**Formula:** Realized ARR = Contracted ARR × PRS\n\n"
+                "A $1M ARR account with PRS 0.65 contributes $650K "
+                "to Realized ARR — the remaining $350K is at risk."
+            ),
+        },
+        "unrealized_gap": {
+            "title": "Unrealized Gap",
+            "body": (
+                "Contracted ARR minus Realized ARR.\n\n"
+                "This is the dollar value of ARR at churn risk — "
+                "customers who have committed to pay but are not "
+                "yet getting sufficient value from the platform.\n\n"
+                "GCS December 2024: $30M unrealized across 1,000 accounts."
+            ),
+        },
+        "health_bands": {
+            "title": "PRS Health Bands",
+            "body": (
+                "🟢 **Green** (PRS ≥ 0.80) — Healthy, identify expansion opportunity  \n"
+                "🟡 **Yellow** (PRS 0.60–0.79) — Watch, proactive CSM outreach needed  \n"
+                "🟠 **Orange** (PRS 0.30–0.59) — At-Risk, CSM + PS intervention needed  \n"
+                "🔴 **Red** (PRS < 0.30) — Critical, executive engagement required"
+            ),
+        },
+        "deployment": {
+            "title": "Deployment Score (40% weight)",
+            "body": (
+                "Are they using what they purchased?\n\n"
+                "**Formula:** MIN(1.0, credits consumed / credits included)\n\n"
+                "- 0.00 — Nothing deployed (shelfware)  \n"
+                "- 0.50 — Using 50% of purchased capacity  \n"
+                "- 1.00 — Fully deployed or consuming in excess  \n\n"
+                "Capped at 1.00 — overages are captured in Expansion Momentum."
+            ),
+        },
+        "sustained": {
+            "title": "Sustained Usage Score (30% weight)",
+            "body": (
+                "Is usage consistent, or was it a one-time spike?\n\n"
+                "**Formula:** healthy months / window size (max 12 months)  \n"
+                "A month is healthy if consumption ≥ 30% of included credits.\n\n"
+                "Catches spike-and-drop: accounts that consumed heavily "
+                "in Month 1 then went dark score near 0.08 (1/12).  \n"
+                "Consistent usage every month = 1.00"
+            ),
+        },
+        "health_signal": {
+            "title": "Technical Health Score (20% weight)",
+            "body": (
+                "Is the platform technically healthy?\n\n"
+                "- Green → 1.00 — No active issues  \n"
+                "- Yellow → 0.60 — Degraded, config errors or elevated errors  \n"
+                "- Red → 0.20 — Critical, active incident or integration failure  \n"
+                "- Missing → 0.60 — Neutral default  \n\n"
+                "In production this connects to support ticket severity, "
+                "MTTR, and API error rates."
+            ),
+        },
+        "expansion": {
+            "title": "Expansion Momentum (10% weight)",
+            "body": (
+                "Is the account showing growth signals?\n\n"
+                "Evaluates consumption pattern over the trailing 6 months:\n\n"
+                "- 1.00 — Consuming 120%+ for 3+ months → strong upsell signal  \n"
+                "- 0.70 — Consuming 70%+ for 3+ months → expansion ready  \n"
+                "- 0.40 — Consuming 30%+ for 3+ months → stable  \n"
+                "- 0.10 — Low usage or account < 3 months old  \n\n"
+                "Overages are not penalised here — they are an opportunity."
+            ),
+        },
+        "shelfware": {
+            "title": "Shelfware",
+            "body": (
+                "Accounts with high contracted ARR but zero usage.\n\n"
+                "**Definition:** Deployment Score = 0 AND Sustained Usage = 0\n\n"
+                "PRS override fires: PRS = 0.00 regardless of other scores.  \n"
+                "Realized ARR = $0 even if contracted ARR is $500K.\n\n"
+                "Risk: these accounts will not renew unless the CSM "
+                "intervenes with a deployment engagement within 90 days."
+            ),
+        },
+        "spike_drop": {
+            "title": "Spike and Drop",
+            "body": (
+                "Accounts that consumed heavily in Month 1 then "
+                "dropped to near-zero usage.\n\n"
+                "**Detection:** deployment_score > 0 AND sustained_usage_score < 0.15\n\n"
+                "Common cause: bulk data migration or proof-of-concept "
+                "that was never operationalised into production workloads.\n\n"
+                "CSM action: re-onboarding engagement, new use case discovery."
+            ),
+        },
+        "overager": {
+            "title": "Consistent Overager",
+            "body": (
+                "Accounts consuming 120%+ of their included credits "
+                "consistently for 3 or more months.\n\n"
+                "This is a positive signal — the customer has outgrown "
+                "their current contract and is ready for an upsell or "
+                "right-sizing conversation.\n\n"
+                "Expansion Momentum = 1.00 for these accounts.  \n"
+                "flag_overage = True in the data."
+            ),
+        },
+        "realization_rate": {
+            "title": "Realization Rate",
+            "body": (
+                "Total Realized ARR ÷ Total Contracted ARR × 100\n\n"
+                "Measures what percentage of contracted value is "
+                "being actively earned through platform usage.\n\n"
+                "- GCS December 2024: 65.2%  \n"
+                "- GCS June 2024 peak: 70.6%  \n\n"
+                "The 5.4 point H2 decline represents $5.2M of ARR "
+                "that was healthy in June but degraded by December."
+            ),
+        },
+    }
+
+    info = definitions.get(key, {})
+    if not info:
+        return
+
+    body = (
+        info["body"]
+        .strip()
+        .replace('"', "&quot;")
+        .replace("\n", "<br>")
+    )
+    title = info["title"].replace('"', "&quot;")
+
+    st.markdown(f"""
+<style>
+.help-wrap-{key} {{
+    display: inline-block;
+    position: relative;
+    cursor: help;
+}}
+.help-icon-{key} {{
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(150,150,170,0.7);
+    border: 1px solid rgba(150,150,170,0.4);
+    border-radius: 50%;
+    width: 13px;
+    height: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 4px;
+    vertical-align: middle;
+    line-height: 1;
+}}
+.help-tooltip-{key} {{
+    visibility: hidden;
+    opacity: 0;
+    width: 280px;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-size: 12px;
+    line-height: 1.6;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 8px;
+    padding: 10px 13px;
+    position: absolute;
+    z-index: 9999;
+    bottom: 130%;
+    left: 50%;
+    transform: translateX(-50%);
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+}}
+.help-tooltip-{key}::after {{
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: rgba(255,255,255,0.15);
+}}
+.help-wrap-{key}:hover .help-tooltip-{key} {{
+    visibility: visible;
+    opacity: 1;
+}}
+</style>
+<span class="help-wrap-{key}">
+    <span class="help-icon-{key}">?</span>
+    <div class="help-tooltip-{key}">
+        <strong>{title}</strong><br><br>{body}
+    </div>
+</span>
+""", unsafe_allow_html=True)
+
+
 # ── BigQuery helpers ──────────────────────────────────────────────────────────
 
 @st.cache_resource
@@ -232,6 +454,58 @@ def load_overlap_contracts() -> pd.DataFrame:
     )
 
 
+@st.cache_data(ttl=600)
+def load_home_summary(month: str) -> pd.DataFrame:
+    """Returns portfolio_summary rows for selected month and the prior month."""
+    month_dt   = datetime.date.fromisoformat(month)
+    prev_month = (month_dt.replace(day=1) - datetime.timedelta(days=1)).replace(day=1)
+    return _run(
+        """
+        SELECT month, total_contracted_arr, total_realized_arr,
+               unrealized_gap,
+               CAST(realization_rate_pct AS FLOAT64) AS realization_rate_pct,
+               CAST(portfolio_prs        AS FLOAT64) AS portfolio_prs
+        FROM `{PROJECT_ID}.{DATASET_ID}.portfolio_summary`
+        WHERE month IN UNNEST(@months)
+        ORDER BY month
+        """,
+        [bigquery.ArrayQueryParameter("months", "DATE", [month, prev_month.isoformat()])],
+    )
+
+
+@st.cache_data(ttl=600)
+def load_component_averages(month: str) -> pd.DataFrame:
+    return _run(
+        """
+        SELECT
+            AVG(CAST(deployment_score       AS FLOAT64)) AS avg_deployment,
+            AVG(CAST(sustained_usage_score  AS FLOAT64)) AS avg_sustained,
+            AVG(CAST(technical_health_score AS FLOAT64)) AS avg_health,
+            AVG(CAST(expansion_momentum     AS FLOAT64)) AS avg_expansion,
+            AVG(CAST(prs                    AS FLOAT64)) AS avg_prs
+        FROM `{PROJECT_ID}.{DATASET_ID}.realized_arr_monthly`
+        WHERE month = @month
+        """,
+        [bigquery.ScalarQueryParameter("month", "DATE", month)],
+    )
+
+
+@st.cache_data(ttl=600)
+def load_spike_drop_summary(month: str) -> pd.DataFrame:
+    return _run(
+        """
+        SELECT
+            COUNT(*)                             AS count,
+            SUM(CAST(contracted_arr AS FLOAT64)) AS arr
+        FROM `{PROJECT_ID}.{DATASET_ID}.realized_arr_monthly`
+        WHERE month = @month
+          AND CAST(deployment_score      AS FLOAT64) > 0
+          AND CAST(sustained_usage_score AS FLOAT64) < 0.15
+        """,
+        [bigquery.ScalarQueryParameter("month", "DATE", month)],
+    )
+
+
 # ── Python aggregation helpers ────────────────────────────────────────────────
 
 def _arr_weighted_prs(df: pd.DataFrame, group_col: str) -> pd.DataFrame:
@@ -308,13 +582,13 @@ st.set_page_config(page_title="PANW GCS North Star", layout="wide")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
-_PAGES = ["Portfolio", "By Region", "By Rep", "By Account", "Data Quality"]
+_PAGES = ["Home", "Portfolio", "By Region", "By Rep", "By Account", "Data Quality"]
 
 # Resolve pending navigation BEFORE the radio widget renders
 if "pending_nav" in st.session_state:
     _nav_default = _PAGES.index(st.session_state.pop("pending_nav"))
 else:
-    _nav_default = _PAGES.index(st.session_state.get("nav_page", "Portfolio"))
+    _nav_default = _PAGES.index(st.session_state.get("nav_page", "Home"))
 
 with st.sidebar:
     st.title("PANW GCS\nNorth Star")
@@ -439,10 +713,337 @@ def _filter_banner() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PAGE 0 — Home  (Executive Snapshot)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if page == "Home":
+
+    # ── Data loading ──────────────────────────────────────────────────────────
+    home_df  = load_home_summary(month_str)
+    comp_df  = load_component_averages(month_str)
+    sd_df    = load_spike_drop_summary(month_str)
+    dq_home  = load_dq_summary()
+    trend_df = load_portfolio_trend()
+
+    # Current-month portfolio row
+    _cur_mask = pd.to_datetime(home_df["month"]).dt.date == month_a
+    if not _cur_mask.any():
+        st.warning("No portfolio data for the selected month.")
+        st.stop()
+    _cur = home_df[_cur_mask].iloc[0]
+
+    contracted    = float(_cur["total_contracted_arr"])
+    realized      = float(_cur["total_realized_arr"])
+    gap           = float(_cur["unrealized_gap"])
+    rate_pct      = float(_cur["realization_rate_pct"])
+    portfolio_prs = float(_cur["portfolio_prs"])
+    gap_m         = gap / 1e6
+
+    # Previous-month realization rate (delta for KPI card)
+    _prev_rows    = home_df[~_cur_mask]
+    prev_rate_pct = float(_prev_rows.iloc[0]["realization_rate_pct"]) if not _prev_rows.empty else rate_pct
+
+    # June 2024 PRS (portfolio peak for banner delta)
+    _june = trend_df[
+        (pd.to_datetime(trend_df["month"]).dt.year  == 2024) &
+        (pd.to_datetime(trend_df["month"]).dt.month == 6)
+    ]
+    june_prs = float(_june["portfolio_prs"].iloc[0]) if not _june.empty else portfolio_prs
+
+    # ── Section 1: Headline banner ────────────────────────────────────────────
+    st.divider()
+    _bl, _bc, _br = st.columns([1, 2, 1])
+
+    with _bl:
+        st.markdown(
+            f"<p style='font-size:13px;color:#888;margin:0'>Realized ARR</p>"
+            f"<p style='font-size:20px;font-weight:700;margin:0'>{month_label}</p>",
+            unsafe_allow_html=True,
+        )
+
+    with _bc:
+        st.markdown(
+            f"<p style='font-size:28px;font-weight:800;color:#A32D2D;margin:0 0 4px 0'>"
+            f"${gap_m:.1f}M unrealized</p>"
+            f"<p style='font-size:14px;color:#666;margin:0'>"
+            f"{100 - rate_pct:.1f}% of contracted ARR not yet earned</p>",
+            unsafe_allow_html=True,
+        )
+
+    with _br:
+        _prs_m, _prs_h = st.columns([6, 1])
+        _prs_m.metric(
+            "Portfolio PRS",
+            f"{portfolio_prs:.3f}",
+            delta=f"{portfolio_prs - june_prs:.3f} vs June peak",
+        )
+        with _prs_h:
+            help_icon("prs")
+
+    st.divider()
+
+    # ── Section 2: Six KPI cards ──────────────────────────────────────────────
+    _n_industries = _filtered_accts["industry"].nunique()
+    _n_reps       = _filtered_accts["rep_id"].nunique()
+    _n_regions    = _filtered_accts["region"].nunique()
+
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1.metric("Contracted ARR", _fmt(contracted), delta="committed")
+    with k2:
+        _m, _h = st.columns([6, 1])
+        _m.metric("Realized ARR", _fmt(realized), delta="earned")
+        with _h: help_icon("realized_arr")
+    with k3:
+        _m, _h = st.columns([6, 1])
+        _m.metric("Unrealized Gap", _fmt(gap), delta="at risk", delta_color="inverse")
+        with _h: help_icon("unrealized_gap")
+    with k4:
+        _m, _h = st.columns([6, 1])
+        _m.metric("Realization Rate", f"{rate_pct:.1f}%",
+                  delta=f"{rate_pct - prev_rate_pct:+.1f}pp vs prev month")
+        with _h: help_icon("realization_rate")
+    k5.metric("Total Accounts", f"{len(_filtered_accts):,}",
+              delta=f"across {_n_industries} industries")
+    k6.metric("Total CSM Reps", f"{_n_reps}",
+              delta=f"across {_n_regions} regions")
+
+    st.divider()
+
+    # ── Section 3: Health band donut  +  PRS component bars ──────────────────
+    _s3l, _s3r = st.columns(2)
+
+    with _s3l:
+        _hb_ttl, _hb_help = st.columns([8, 1])
+        with _hb_ttl:
+            st.subheader("Health Band Distribution")
+        with _hb_help:
+            help_icon("health_bands")
+
+        band_agg = (
+            _filtered_accts.groupby("prs_band")
+            .agg(accounts=("account_id", "count"), arr=("contracted_arr", "sum"))
+            .reindex(BAND_ORDER).fillna(0).reset_index()
+        )
+        band_agg["arr"]       = band_agg["arr"].astype(float)
+        _band_total_arr       = band_agg["arr"].sum()
+
+        fig_donut = px.pie(
+            band_agg, values="accounts", names="prs_band",
+            hole=0.5, color="prs_band",
+            color_discrete_map=BAND_COLORS,
+            category_orders={"prs_band": BAND_ORDER},
+        )
+        fig_donut.update_traces(textposition="outside", textinfo="percent+label")
+        fig_donut.update_layout(showlegend=False, height=280, margin=dict(t=20, b=10))
+        st.plotly_chart(fig_donut, use_container_width=True)
+
+        mini = band_agg.copy()
+        mini["ARR ($M)"]       = (mini["arr"] / 1e6).round(1)
+        mini["% of portfolio"] = (
+            (mini["arr"] / _band_total_arr * 100).round(1) if _band_total_arr else 0.0
+        )
+        st.dataframe(
+            mini.rename(columns={"prs_band": "Band", "accounts": "Accounts"})
+                [["Band", "Accounts", "ARR ($M)", "% of portfolio"]],
+            use_container_width=True, hide_index=True,
+        )
+
+    with _s3r:
+        st.subheader("What is driving PRS?")
+        _dl, _dh = st.columns([5, 0.3])
+        with _dl: st.markdown("**Deployment Score**  ·  40% weight")
+        with _dh: help_icon("deployment")
+        _sl, _sh = st.columns([5, 0.3])
+        with _sl: st.markdown("**Sustained Usage**  ·  30% weight")
+        with _sh: help_icon("sustained")
+        _hl, _hh2 = st.columns([5, 0.3])
+        with _hl: st.markdown("**Technical Health**  ·  20% weight")
+        with _hh2: help_icon("health_signal")
+        _el, _eh = st.columns([5, 0.3])
+        with _el: st.markdown("**Expansion Momentum**  ·  10% weight")
+        with _eh: help_icon("expansion")
+
+        if not comp_df.empty:
+            _cr = comp_df.iloc[0]
+            _components = [
+                ("Deployment Score",   float(_cr["avg_deployment"]), "40%"),
+                ("Sustained Usage",    float(_cr["avg_sustained"]),  "30%"),
+                ("Technical Health",   float(_cr["avg_health"]),     "20%"),
+                ("Expansion Momentum", float(_cr["avg_expansion"]),  "10%"),
+            ]
+            _min_score = min(s for _, s, _ in _components)
+            _comp_chart = pd.DataFrame([
+                {
+                    "Component": f"{name}  ({wt})",
+                    "Score":     score,
+                    "color_key": (
+                        "#D85A30"
+                        if name == "Expansion Momentum" and score == _min_score
+                        else "#185FA5"
+                    ),
+                }
+                for name, score, wt in _components
+            ])
+            _cmap_comp = dict(zip(_comp_chart["Component"], _comp_chart["color_key"]))
+
+            fig_comp = px.bar(
+                _comp_chart, x="Score", y="Component",
+                orientation="h",
+                color="Component",
+                color_discrete_map=_cmap_comp,
+                category_orders={"Component": _comp_chart["Component"].tolist()},
+                text=_comp_chart["Score"].map(lambda v: f"{v:.3f}"),
+                labels={"Score": "Average score (0–1)", "Component": ""},
+                range_x=[0, 1],
+            )
+            _avg_prs = float(_cr["avg_prs"])
+            fig_comp.add_vline(
+                x=_avg_prs, line_dash="dash", line_color="#333",
+                annotation_text=f"Portfolio PRS {_avg_prs:.3f}",
+                annotation_position="top right",
+            )
+            fig_comp.update_traces(
+                textposition="inside", insidetextanchor="end", showlegend=False
+            )
+            fig_comp.update_layout(height=280, margin=dict(t=30, b=10))
+            st.plotly_chart(fig_comp, use_container_width=True)
+
+            _best_score = max(s for _, s, _ in _components)
+            st.caption(
+                f"Expansion Momentum is the weakest component — "
+                f"dragging portfolio PRS from potential {_best_score:.2f} to {_avg_prs:.2f}"
+            )
+
+    st.divider()
+
+    # ── Section 4: Risks  +  Opportunities ───────────────────────────────────
+    _risk_col, _opp_col = st.columns(2)
+
+    _shelfware_accts = _filtered_accts[_filtered_accts["shelfware_override"].astype(bool)]
+    _red_accts       = _filtered_accts[_filtered_accts["prs_band"] == "Red"]
+    _overage_accts   = _filtered_accts[_filtered_accts["flag_overage"].astype(bool)]
+    _high_prs_accts  = _filtered_accts[_filtered_accts["prs"].astype(float) >= 0.80]
+
+    _shelfware_arr_m = _shelfware_accts["contracted_arr"].astype(float).sum() / 1e6
+    _red_arr_m       = _red_accts["contracted_arr"].astype(float).sum()       / 1e6
+    _overage_arr_m   = _overage_accts["contracted_arr"].astype(float).sum()   / 1e6
+    _high_prs_arr_m  = _high_prs_accts["contracted_arr"].astype(float).sum()  / 1e6
+
+    _sd_count   = int(sd_df["count"].iloc[0])             if not sd_df.empty else 0
+    _sd_arr_m   = float(sd_df["arr"].iloc[0]) / 1e6       if not sd_df.empty else 0.0
+
+    _rgn_metrics = compute_region_metrics(_filtered_accts)
+    if not _rgn_metrics.empty:
+        _worst_rgn       = _rgn_metrics.iloc[0]
+        _worst_region    = _worst_rgn["region"]
+        _worst_rgn_prs   = _worst_rgn["portfolio_prs_pct"] / 100
+    else:
+        _worst_region, _worst_rgn_prs = "N/A", 0.0
+
+    with _risk_col:
+        st.markdown("<h3 style='color:#A32D2D'>⚠ Risks</h3>", unsafe_allow_html=True)
+        _sw_m, _sw_h = st.columns([6, 1])
+        _sw_m.metric("Shelfware",
+                     f"{len(_shelfware_accts)} accounts · ${_shelfware_arr_m:.1f}M ARR",
+                     delta="Zero deployment — immediate CSM outreach needed",
+                     delta_color="inverse")
+        with _sw_h: help_icon("shelfware")
+        st.metric("At-Risk (Red band)",
+                  f"{len(_red_accts)} accounts · ${_red_arr_m:.1f}M ARR",
+                  delta="PRS < 0.30 — churn risk before renewal",
+                  delta_color="inverse")
+        _sd_m, _sd_h = st.columns([6, 1])
+        _sd_m.metric("Spike & Drop",
+                     f"{_sd_count} accounts · ${_sd_arr_m:.1f}M ARR",
+                     delta="High Month 1 consumption, near-zero since",
+                     delta_color="inverse")
+        with _sd_h: help_icon("spike_drop")
+
+    with _opp_col:
+        st.markdown("<h3 style='color:#1D9E75'>↑ Opportunities</h3>", unsafe_allow_html=True)
+        _ov_m, _ov_h = st.columns([6, 1])
+        _ov_m.metric("Expansion Ready (Overagers)",
+                     f"{len(_overage_accts)} accounts · ${_overage_arr_m:.1f}M ARR",
+                     delta="Consuming 120%+ of included credits — right-size now")
+        with _ov_h: help_icon("overager")
+        st.metric("High PRS Accounts",
+                  f"{len(_high_prs_accts)} accounts · ${_high_prs_arr_m:.1f}M ARR",
+                  delta="Healthy base — candidates for upsell")
+        st.metric("Worst Region",
+                  f"{_worst_region} · {_worst_rgn_prs:.1%} realization",
+                  delta="Highest recovery opportunity by region",
+                  delta_color="off")
+
+    st.divider()
+
+    # ── Section 5: Monthly trend sparkline ───────────────────────────────────
+    st.subheader("2024 — Contracted vs Realized ARR")
+
+    _t = trend_df.copy()
+    _t["Contracted ARR ($M)"] = _t["total_contracted_arr"].astype(float) / 1e6
+    _t["Realized ARR ($M)"]   = _t["total_realized_arr"].astype(float)   / 1e6
+    _t["month_label"]         = pd.to_datetime(_t["month"]).dt.strftime("%b %Y")
+
+    fig_spark = px.line(
+        _t, x="month_label",
+        y=["Contracted ARR ($M)", "Realized ARR ($M)"],
+        markers=True,
+        color_discrete_sequence=["#4A90D9", "#1D9E75"],
+        labels={"value": "ARR ($M)", "variable": "", "month_label": ""},
+    )
+    # Shade the unrealized gap between the two lines in light red
+    fig_spark.data[1].update(fill="tonexty", fillcolor="rgba(163,45,45,0.12)")
+
+    # Categorical x axis requires add_shape/add_annotation (add_vline uses numeric index)
+    _month_labels = _t["month_label"].tolist()
+    _june_idx = (
+        _month_labels.index("Jun 2024")
+        if "Jun 2024" in _month_labels
+        else None
+    )
+    if _june_idx is not None:
+        fig_spark.add_shape(
+            type="line",
+            x0=_june_idx, x1=_june_idx,
+            y0=0, y1=1,
+            xref="x", yref="paper",
+            line=dict(color="#BA7517", width=1, dash="dot"),
+        )
+        fig_spark.add_annotation(
+            x=_june_idx, y=1,
+            xref="x", yref="paper",
+            text="PRS peak",
+            showarrow=False,
+            font=dict(size=10, color="#BA7517"),
+            xanchor="left", yanchor="top",
+        )
+
+    fig_spark.update_layout(
+        height=180,
+        margin=dict(t=20, b=10, l=0, r=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        yaxis_title="ARR ($M)",
+    )
+    st.plotly_chart(fig_spark, use_container_width=True)
+
+    # ── Section 6: Footer ─────────────────────────────────────────────────────
+    _last_run_home = None
+    if not dq_home.empty and "last_run" in dq_home.columns:
+        _lrts = pd.to_datetime(dq_home["last_run"].max())
+        if pd.notna(_lrts):
+            _last_run_home = _lrts.strftime("%Y-%m-%d %H:%M UTC")
+
+    st.caption(
+        f"Data as of: {_last_run_home or 'Unknown'} · "
+        f"BigQuery: {DATASET_ID} · 22/22 tests passing"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # PAGE 1 — Portfolio Executive Summary
 # ═══════════════════════════════════════════════════════════════════════════════
 
-if page == "Portfolio":
+elif page == "Portfolio":
     _cmp_hdr = (
         f"{month_a.strftime('%b %Y')} vs {month_b.strftime('%b %Y')}"
         if compare_mode else month_label
@@ -932,6 +1533,11 @@ elif page == "By Account":
 
     # Row 2: PRS component waterfall
     st.subheader("PRS component contributions")
+    _wf_d, _wf_s, _wf_h, _wf_e = st.columns(4)
+    with _wf_d: help_icon("deployment")
+    with _wf_s: help_icon("sustained")
+    with _wf_h: help_icon("health_signal")
+    with _wf_e: help_icon("expansion")
 
     wf_df = pd.DataFrame([
         {"Component": "Deployment × 0.40", "Contribution": float(acct_row["deployment_score"])       * 0.40},
