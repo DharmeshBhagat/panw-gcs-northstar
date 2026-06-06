@@ -27,7 +27,7 @@ COMPONENT_COLORS = {
     "Expansion × 0.10":  "#27AE60",
 }
 
-CAPTION = "Data source: BigQuery gcs_north_star · Refreshes every 10 minutes"
+CAPTION = "Data source: Synthetic dataset · BigQuery gcs_north_star · Refreshes every 10 minutes"
 
 
 # ── Contextual help popovers ──────────────────────────────────────────────────
@@ -70,7 +70,7 @@ def help_icon(key: str) -> None:
                 "This is the dollar value of ARR at churn risk — "
                 "customers who have committed to pay but are not "
                 "yet getting sufficient value from the platform.\n\n"
-                "GCS December 2024: $30M unrealized across 1,000 accounts."
+                "Synthetic December 2024: $30M unrealized across 1,000 accounts."
             ),
         },
         "health_bands": {
@@ -168,8 +168,8 @@ def help_icon(key: str) -> None:
                 "Total Realized ARR ÷ Total Contracted ARR × 100\n\n"
                 "Measures what percentage of contracted value is "
                 "being actively earned through platform usage.\n\n"
-                "- GCS December 2024: 65.2%  \n"
-                "- GCS June 2024 peak: 70.6%  \n\n"
+                "- Synthetic December 2024: 65.2%  \n"
+                "- Synthetic June 2024 peak: 70.6%  \n\n"
                 "The 5.4 point H2 decline represents $5.2M of ARR "
                 "that was healthy in June but degraded by December."
             ),
@@ -506,6 +506,34 @@ def load_spike_drop_summary(month: str) -> pd.DataFrame:
     )
 
 
+@st.cache_data(ttl=600)
+def load_data_confidence() -> pd.DataFrame:
+    sql = """
+    SELECT
+        COUNT(*) AS total_logs,
+        COUNTIF(
+            account_id IN (
+                SELECT account_id FROM `{PROJECT_ID}.{DATASET_ID}.accounts`
+            )
+            AND date >= DATE('2024-01-01')
+            AND compute_credits_consumed >= 0
+        ) AS clean_logs,
+        COUNTIF(
+            account_id NOT IN (
+                SELECT account_id FROM `{PROJECT_ID}.{DATASET_ID}.accounts`
+            )
+        ) AS orphaned_logs,
+        COUNTIF(date < DATE('2024-01-01')) AS rogue_logs,
+        COUNTIF(compute_credits_consumed < 0) AS negative_logs
+    FROM `{PROJECT_ID}.{DATASET_ID}.daily_usage_logs`
+    """
+    df = _run(sql)
+    return df.astype({
+        "total_logs": int, "clean_logs": int,
+        "orphaned_logs": int, "rogue_logs": int, "negative_logs": int,
+    })
+
+
 # ── Python aggregation helpers ────────────────────────────────────────────────
 
 def _arr_weighted_prs(df: pd.DataFrame, group_col: str) -> pd.DataFrame:
@@ -591,7 +619,7 @@ else:
     _nav_default = _PAGES.index(st.session_state.get("nav_page", "Home"))
 
 with st.sidebar:
-    st.title("PANW GCS\nNorth Star")
+    st.title("Realized ARR Command Center")
     st.divider()
 
     page = st.radio(
@@ -712,6 +740,22 @@ def _filter_banner() -> None:
         st.info(f"Filters active: {_n_filtered:,} of {_n_total:,} accounts shown")
 
 
+def region_action(row) -> str:
+    prs = float(row.get("portfolio_prs_pct", 0)) / 100
+    gap_pct = 1 - prs
+    overagers = int(row.get("overage_accounts", 0))
+    total_accts = int(row.get("accounts", 1)) or 1
+    if prs < 0.60 and gap_pct > 0.40:
+        return "🔴 Regional recovery plan"
+    if overagers / total_accts > 0.25:
+        return "🟢 Expansion motion"
+    if prs < 0.70:
+        return "🟡 CSM capacity review"
+    if prs < 0.80:
+        return "🔵 Monitor — maintain cadence"
+    return "✅ Healthy — identify upsell candidates"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE 0 — Home  (Executive Snapshot)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -749,6 +793,35 @@ if page == "Home":
         (pd.to_datetime(trend_df["month"]).dt.month == 6)
     ]
     june_prs = float(_june["portfolio_prs"].iloc[0]) if not _june.empty else portfolio_prs
+
+    st.header(f"Realized ARR Scorecard — {month_label}")
+    st.caption(f"Portfolio health · {month_a.strftime('%B %Y')} · Palo Alto Networks GCS")
+
+    st.markdown(f"""
+<div style="
+  background: #0f3d2a;
+  border: 1px solid #1D9E75;
+  border-radius: 8px;
+  padding: 14px 20px;
+  margin-bottom: 20px;
+  color: #FFFFFF;
+  font-size: 13px;
+  line-height: 1.7;
+">
+  <span style="
+    font-size: 11px;
+    font-weight: 600;
+    color: #1D9E75;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  ">Recommendation</span><br>
+  Run Realized ARR as a <strong>shadow North Star metric
+  for one quarter</strong> before using it in compensation.
+  {month_a.strftime('%B')} synthetic data shows
+  <strong style="color:#D85A30">${gap_m:.1f}M unrealized ARR</strong>
+  requiring CSM/PS action.
+</div>
+""", unsafe_allow_html=True)
 
     # ── Section 1: Headline banner ────────────────────────────────────────────
     st.divider()
@@ -916,7 +989,8 @@ if page == "Home":
 
     st.divider()
 
-    # ── Section 4: Risks  +  Opportunities ───────────────────────────────────
+    # ── Section 4: Where GCS should act next ─────────────────────────────────
+    st.subheader("Where GCS should act next")
     _risk_col, _opp_col = st.columns(2)
 
     _shelfware_accts = _filtered_accts[_filtered_accts["shelfware_override"].astype(bool)]
@@ -934,45 +1008,57 @@ if page == "Home":
 
     _rgn_metrics = compute_region_metrics(_filtered_accts)
     if not _rgn_metrics.empty:
-        _worst_rgn       = _rgn_metrics.iloc[0]
-        _worst_region    = _worst_rgn["region"]
-        _worst_rgn_prs   = _worst_rgn["portfolio_prs_pct"] / 100
+        _worst_rgn     = _rgn_metrics.iloc[0]
+        _worst_region  = _worst_rgn["region"]
+        _worst_rgn_prs = _worst_rgn["portfolio_prs_pct"] / 100
     else:
         _worst_region, _worst_rgn_prs = "N/A", 0.0
 
     with _risk_col:
-        st.markdown("<h3 style='color:#A32D2D'>⚠ Risks</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='color:#A32D2D'>Recover ARR</h3>", unsafe_allow_html=True)
+
         _sw_m, _sw_h = st.columns([6, 1])
         _sw_m.metric("Shelfware",
                      f"{len(_shelfware_accts)} accounts · ${_shelfware_arr_m:.1f}M ARR",
-                     delta="Zero deployment — immediate CSM outreach needed",
                      delta_color="inverse")
         with _sw_h: help_icon("shelfware")
+        st.markdown("<div style='font-size:11px;color:gray'>↳ 90-day adoption plan — assign PS deployment sprint</div>",
+                    unsafe_allow_html=True)
+
         st.metric("At-Risk (Red band)",
                   f"{len(_red_accts)} accounts · ${_red_arr_m:.1f}M ARR",
-                  delta="PRS < 0.30 — churn risk before renewal",
                   delta_color="inverse")
+        st.markdown("<div style='font-size:11px;color:gray'>↳ CSM + PS intervention — 45-day recovery plan</div>",
+                    unsafe_allow_html=True)
+
         _sd_m, _sd_h = st.columns([6, 1])
         _sd_m.metric("Spike & Drop",
                      f"{_sd_count} accounts · ${_sd_arr_m:.1f}M ARR",
-                     delta="High Month 1 consumption, near-zero since",
                      delta_color="inverse")
         with _sd_h: help_icon("spike_drop")
+        st.markdown("<div style='font-size:11px;color:gray'>↳ Re-onboarding · use-case discovery session</div>",
+                    unsafe_allow_html=True)
 
     with _opp_col:
-        st.markdown("<h3 style='color:#1D9E75'>↑ Opportunities</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='color:#1D9E75'>Expand ARR</h3>", unsafe_allow_html=True)
+
         _ov_m, _ov_h = st.columns([6, 1])
-        _ov_m.metric("Expansion Ready (Overagers)",
-                     f"{len(_overage_accts)} accounts · ${_overage_arr_m:.1f}M ARR",
-                     delta="Consuming 120%+ of included credits — right-size now")
+        _ov_m.metric("Consistent Overagers",
+                     f"{len(_overage_accts)} accounts · ${_overage_arr_m:.1f}M ARR")
         with _ov_h: help_icon("overager")
+        st.markdown("<div style='font-size:11px;color:gray'>↳ Expansion or right-sizing discussion</div>",
+                    unsafe_allow_html=True)
+
         st.metric("High PRS Accounts",
-                  f"{len(_high_prs_accts)} accounts · ${_high_prs_arr_m:.1f}M ARR",
-                  delta="Healthy base — candidates for upsell")
+                  f"{len(_high_prs_accts)} accounts · ${_high_prs_arr_m:.1f}M ARR")
+        st.markdown("<div style='font-size:11px;color:gray'>↳ Upsell candidate — platform breadth conversation</div>",
+                    unsafe_allow_html=True)
+
         st.metric("Worst Region",
                   f"{_worst_region} · {_worst_rgn_prs:.1%} realization",
-                  delta="Highest recovery opportunity by region",
                   delta_color="off")
+        st.markdown("<div style='font-size:11px;color:gray'>↳ Regional QBR — identify top 5 recovery accounts</div>",
+                    unsafe_allow_html=True)
 
     st.divider()
 
@@ -1025,6 +1111,27 @@ if page == "Home":
         yaxis_title="ARR ($M)",
     )
     st.plotly_chart(fig_spark, use_container_width=True)
+
+    # ── Decision Ask banner ───────────────────────────────────────────────────
+    st.markdown("""
+<div style="
+  background: #1a2a3a;
+  border-left: 4px solid #1D9E75;
+  border-radius: 6px;
+  padding: 14px 18px;
+  margin-top: 20px;
+  color: #FFFFFF;
+">
+  <div style="font-size:13px;font-weight:600;color:#1D9E75;margin-bottom:6px;">
+    Decision ask
+  </div>
+  <div style="font-size:13px;color:#e0e0e0;line-height:1.6;">
+    Approve Realized ARR as a <strong>shadow North Star metric for one quarter.</strong>
+    Do not use for compensation until data confidence, business behavior,
+    and exception handling are validated.
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
     # ── Section 6: Footer ─────────────────────────────────────────────────────
     _last_run_home = None
@@ -1144,6 +1251,45 @@ elif page == "Portfolio":
     # ── Section C: Monthly trend ──────────────────────────────────────────────
     st.subheader("Realized ARR trend")
 
+    # Always pull full portfolio_summary for insight + milestone table (unfiltered)
+    _pt = load_portfolio_trend().copy()
+    _jan_r   = _pt[pd.to_datetime(_pt["month"]).dt.strftime("%Y-%m-%d") == "2024-01-01"]
+    _jun_r   = _pt[pd.to_datetime(_pt["month"]).dt.strftime("%Y-%m-%d") == "2024-06-01"]
+    _dec_r   = _pt[pd.to_datetime(_pt["month"]).dt.strftime("%Y-%m-%d") == "2024-12-01"]
+    _jan_row = _jan_r.iloc[0] if not _jan_r.empty else None
+    _jun_row = _jun_r.iloc[0] if not _jun_r.empty else None
+    _dec_row = _dec_r.iloc[0] if not _dec_r.empty else None
+
+    if _jan_row is not None and _jun_row is not None and _dec_row is not None:
+        _peak_prs = float(_pt["portfolio_prs"].max())
+        _dec_prs  = float(_dec_row["portfolio_prs"])
+        _decline  = round(_peak_prs - _dec_prs, 3)
+        _gap_dec  = round(
+            (float(_dec_row["total_contracted_arr"]) - float(_dec_row["total_realized_arr"])) / 1e6,
+            1,
+        )
+        st.markdown(f"""
+<div style="
+  background: #1a2a3a;
+  border-left: 3px solid #BA7517;
+  border-radius: 0 6px 6px 0;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: #FFFFFF;
+  line-height: 1.7;
+">
+  <em>In this synthetic run:</em> Portfolio PRS peaked at
+  <strong style="color:#1D9E75">{_peak_prs:.3f}</strong> in June
+  and declined by <strong style="color:#D85A30">{_decline:.3f} points</strong>
+  to {_dec_prs:.3f} by December — suggesting newer ARR additions
+  in H2 are not realizing value at the same rate as the existing base.
+  The unrealized gap at year-end stands at
+  <strong style="color:#D85A30">${_gap_dec}M</strong>,
+  representing the GCS intervention opportunity.
+</div>
+""", unsafe_allow_html=True)
+
     if _FA:
         filt_yr = apply_filters(load_all_months_accounts())
         trend = (
@@ -1174,6 +1320,58 @@ elif page == "Portfolio":
         margin=dict(t=40, b=10),
     )
     st.plotly_chart(fig_trend, use_container_width=True)
+
+    # ── Jan / Jun / Dec milestone table ──────────────────────────────────────
+    if _jan_row is not None and _jun_row is not None and _dec_row is not None:
+        st.markdown("#### Key milestones — Jan · Jun · Dec 2024")
+
+        def _gap(row):
+            return (float(row["total_contracted_arr"]) - float(row["total_realized_arr"])) / 1e6
+
+        _milestone_data = {
+            "Metric": [
+                "Contracted ARR",
+                "Realized ARR",
+                "Portfolio PRS",
+                "Unrealized Gap",
+            ],
+            "Jan 2024": [
+                f"${float(_jan_row['total_contracted_arr']) / 1e6:.1f}M",
+                f"${float(_jan_row['total_realized_arr']) / 1e6:.1f}M",
+                f"{float(_jan_row['portfolio_prs']):.3f}",
+                f"${_gap(_jan_row):.1f}M",
+            ],
+            "Jun 2024": [
+                f"${float(_jun_row['total_contracted_arr']) / 1e6:.1f}M",
+                f"${float(_jun_row['total_realized_arr']) / 1e6:.1f}M",
+                f"{float(_jun_row['portfolio_prs']):.3f}",
+                f"${_gap(_jun_row):.1f}M",
+            ],
+            "Dec 2024": [
+                f"${float(_dec_row['total_contracted_arr']) / 1e6:.1f}M",
+                f"${float(_dec_row['total_realized_arr']) / 1e6:.1f}M",
+                f"{float(_dec_row['portfolio_prs']):.3f}",
+                f"${_gap(_dec_row):.1f}M",
+            ],
+            "Signal": [
+                "↑ Growth",
+                "↑ Value captured",
+                "↓ Health declining",
+                "↑ Intervention need",
+            ],
+        }
+        st.dataframe(
+            pd.DataFrame(_milestone_data),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "Jun is the PRS peak. Dec shows H2 health erosion "
+            "despite ARR growth — the core finding that motivates "
+            "Realized ARR as a North Star metric."
+        )
+    else:
+        st.warning("Run pipeline for Jan, Jun, and Dec to see this table.")
 
     st.caption(CAPTION)
 
@@ -1280,18 +1478,47 @@ elif page == "By Region":
             fig_prs.update_layout(showlegend=False)
             st.plotly_chart(fig_prs, use_container_width=True)
 
+        # — Insight callout: worst-performing region —
+        if not region_df.empty:
+            _worst_idx = region_df["portfolio_prs_pct"].astype(float).idxmin()
+            _worst_region = region_df.loc[_worst_idx, "region"]
+            _worst_prs = float(region_df.loc[_worst_idx, "portfolio_prs_pct"]) / 100
+            _worst_arr = float(region_df.loc[_worst_idx, "at_risk_arr"])
+            st.markdown(
+                f"""<div style="background:#1a2a3a;border-left:3px solid #BA7517;
+                    padding:10px 14px;border-radius:4px;margin:12px 0;color:#FFFFFF;font-size:13px;line-height:1.6;">
+                    <strong style="color:#E8A020;">&#x26A0; So what?</strong>&nbsp;
+                    <strong>{_worst_region}</strong> has the lowest portfolio PRS at
+                    <strong>{_worst_prs:.3f}</strong> — below the portfolio average of
+                    <strong>{portfolio_avg/100:.3f}</strong>.
+                    At-risk ARR in this region is
+                    <strong>${_worst_arr/1e6:.1f}M</strong>.
+                    Priority: CSM intervention and PS engagement for at-risk accounts.
+                </div>""",
+                unsafe_allow_html=True,
+            )
+
         st.divider()
         st.subheader("Region Summary  (worst PRS first)")
+
+        region_df["Recommended Action"] = region_df.apply(region_action, axis=1)
 
         tbl = region_df.rename(columns={
             "region": "Region", "accounts": "Accounts",
             "portfolio_prs_pct": "PRS%", "at_risk_arr": "At-Risk ARR",
-        })[["Region", "Accounts", "Contracted ARR ($M)", "Realized ARR ($M)", "PRS%", "At-Risk ARR"]].copy()
+        })[["Region", "Accounts", "Contracted ARR ($M)", "Realized ARR ($M)", "PRS%", "At-Risk ARR", "Recommended Action"]].copy()
         tbl["Contracted ARR ($M)"] = tbl["Contracted ARR ($M)"].round(1)
         tbl["Realized ARR ($M)"]   = tbl["Realized ARR ($M)"].round(1)
         tbl["At-Risk ARR"] = tbl["At-Risk ARR"].apply(_fmt)
 
-        st.dataframe(tbl, use_container_width=True, hide_index=True)
+        st.dataframe(tbl.sort_values("PRS%"), use_container_width=True, hide_index=True)
+
+        st.caption(
+            "**DQ note:** Region roll-ups exclude accounts where `included_monthly_compute_credits = 0` "
+            "(DQ-004) and accounts with orphaned or pre-2024 usage logs (DQ-001/DQ-002). "
+            "At-Risk ARR reflects unrealized gap for accounts with PRS < 0.70 only. "
+            "See the Data Quality page for full exclusion counts."
+        )
 
     st.caption(CAPTION)
 
@@ -1301,7 +1528,15 @@ elif page == "By Region":
 # ═══════════════════════════════════════════════════════════════════════════════
 
 elif page == "By Rep":
-    st.header(f"Performance by Sales Rep — {month_label}")
+    st.header(f"CSM / Rep Realization View — Shadow Metric — {month_label}")
+    st.warning(
+        "**Shadow measurement only.** "
+        "This view is for CSM coaching and portfolio "
+        "visibility — not for compensation decisions in Phase 1. "
+        "Rep rankings should not be shared externally until "
+        "data confidence, exception handling, and business "
+        "behavior are validated over at least one full quarter."
+    )
     _filter_banner()
 
     if _filtered_accts.empty:
@@ -1349,7 +1584,7 @@ elif page == "By Rep":
             clicked_rep = _tbl_cmp.iloc[rep_selection.selection.rows[0]]["rep_name"]
             st.session_state["rep_drill_selection"] = clicked_rep
     else:
-        st.subheader("Rep Performance  (worst PRS first)")
+        st.subheader("Accounts needing coaching support (lowest realization first)")
 
         tbl = rep_df.copy()
         if _FA:
@@ -1363,10 +1598,10 @@ elif page == "By Rep":
             "segment":              "Segment",
             "total_contracted_arr": "Contracted ARR",
             "total_realized_arr":   "Realized ARR",
-            "portfolio_prs_pct":    "PRS%",
+            "portfolio_prs_pct":    "Realization Rate (shadow)",
             "at_risk_arr":          "At-Risk ARR",
         })[["Rep Name", "Region", "Segment", "Accounts",
-            "Contracted ARR", "Realized ARR", "PRS%", "At-Risk ARR"]]
+            "Contracted ARR", "Realized ARR", "Realization Rate (shadow)", "At-Risk ARR"]]
 
         tbl["Contracted ARR"] = tbl["Contracted ARR"].apply(_fmt)
         tbl["Realized ARR"]   = tbl["Realized ARR"].apply(_fmt)
@@ -1381,6 +1616,11 @@ elif page == "By Rep":
             clicked_rep = rep_df.iloc[rep_selection.selection.rows[0]]["rep_name"]
             st.session_state["rep_drill_selection"] = clicked_rep
 
+    st.caption(
+        "Realization Rate = Realized ARR ÷ Contracted ARR. "
+        "Low rates indicate deployment or adoption gaps — "
+        "not rep performance — until root cause is confirmed."
+    )
     st.caption("Click a row to populate the drill-down below")
 
     st.divider()
@@ -1628,6 +1868,87 @@ elif page == "By Account":
 
     st.markdown(" ".join(badge_parts), unsafe_allow_html=True)
 
+    # ── Recommended next action ───────────────────────────────────────────────
+    _shelfware = bool(acct_row.get("shelfware_override", False))
+    _prs_band  = str(acct_row.get("prs_band", ""))
+    _overage   = bool(acct_row.get("flag_overage", False))
+    _health    = float(acct_row.get("technical_health_score", 0.6))
+    _sustained = float(acct_row.get("sustained_usage_score", 0.0))
+    _prs       = float(acct_row.get("prs", 0.0))
+
+    if _shelfware:
+        _action  = "Schedule adoption workshop within 30 days"
+        _urgency = "critical"
+        _icon    = "🔴"
+    elif _prs_band == "Red":
+        _action  = "CSM + PS recovery plan — 45-day sprint"
+        _urgency = "critical"
+        _icon    = "🔴"
+    elif _overage and _health >= 0.6:
+        _action  = "Expansion or right-sizing conversation"
+        _urgency = "opportunity"
+        _icon    = "🟢"
+    elif _overage and _health < 0.6:
+        _action  = "Resolve technical friction before expansion"
+        _urgency = "warning"
+        _icon    = "🟡"
+    elif _sustained < 0.15:
+        _action  = "Investigate spike/drop pattern — re-onboarding"
+        _urgency = "warning"
+        _icon    = "🟡"
+    elif _prs_band == "Yellow":
+        _action  = "Proactive outreach — check deployment blockers"
+        _urgency = "watch"
+        _icon    = "🔵"
+    else:
+        _action  = "Monitor in next monthly review"
+        _urgency = "healthy"
+        _icon    = "✅"
+
+    _color_map = {
+        "critical":    ("#3d1a0f", "#D85A30"),
+        "warning":     ("#2d2200", "#BA7517"),
+        "opportunity": ("#0f3d2a", "#1D9E75"),
+        "watch":       ("#0a1f3d", "#185FA5"),
+        "healthy":     ("#1a2a3a", "#94A3B8"),
+    }
+    _bg, _border = _color_map[_urgency]
+
+    st.markdown(f"""
+<div style="
+  background: {_bg};
+  border-left: 4px solid {_border};
+  border-radius: 0 8px 8px 0;
+  padding: 14px 18px;
+  margin: 16px 0 8px 0;
+">
+  <div style="
+    font-size: 11px;
+    font-weight: 600;
+    color: {_border};
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  ">
+    Recommended next action
+  </div>
+  <div style="
+    font-size: 15px;
+    font-weight: 500;
+    color: #FFFFFF;
+    line-height: 1.5;
+  ">
+    {_icon} &nbsp; {_action}
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    st.caption(
+        "Action based on PRS components for "
+        f"{selected_company} in {selected_month.strftime('%B %Y')}. "
+        "Confirm with CSM before initiating."
+    )
+
     st.caption(CAPTION)
 
 
@@ -1642,6 +1963,36 @@ elif page == "Data Quality":
     total_logs = load_daily_log_count()
 
     # ── Section A: Summary cards ──────────────────────────────────────────────
+    conf_df    = load_data_confidence()
+    conf       = conf_df.iloc[0]
+    _total_raw = int(conf["total_logs"])
+    _clean     = int(conf["clean_logs"])
+    _excluded  = _total_raw - _clean
+    confidence_pct = round(_clean / _total_raw * 100, 2) if _total_raw > 0 else 0.0
+
+    conf_col, _ = st.columns([2, 2])
+    with conf_col:
+        st.metric(
+            label="Data Confidence",
+            value=f"{confidence_pct}%",
+            delta=f"{_excluded:,} rows excluded from metric",
+            delta_color="off",
+        )
+    if confidence_pct >= 99:
+        st.success(f"High confidence — {confidence_pct}% of logs are clean")
+    elif confidence_pct >= 95:
+        st.warning(f"Moderate confidence — {confidence_pct}% of logs are clean")
+    else:
+        st.error("Low confidence — review DQ issues before metric use")
+    st.caption(
+        f"{_clean:,} clean logs of {_total_raw:,} total · "
+        f"{conf['orphaned_logs']:,} orphaned (DQ-001) · "
+        f"{conf['rogue_logs']:,} pre-contract (DQ-002) · "
+        f"{conf['negative_logs']:,} negative values (DQ-005)"
+    )
+
+    st.divider()
+
     dq001 = int(dq_df.loc[dq_df["dq_rule"] == "DQ-001", "count"].sum()) if not dq_df.empty else 0
     dq002 = int(dq_df.loc[dq_df["dq_rule"] == "DQ-002", "count"].sum()) if not dq_df.empty else 0
     clean = total_logs - dq001 - dq002
@@ -1735,16 +2086,8 @@ elif page == "Data Quality":
         if pd.notna(_ts):
             last_run = _ts
 
-    col_run, col_badge = st.columns([3, 1])
-    with col_run:
-        ts_str = last_run.strftime("%Y-%m-%d %H:%M UTC") if last_run else "Unknown"
-        st.markdown(f"**Last pipeline run:** {ts_str}")
-    with col_badge:
-        st.markdown(
-            '<span style="background:#1D9E75;color:white;'
-            'padding:5px 14px;border-radius:5px;font-weight:bold">'
-            '&#10003; 22/22 tests passing</span>',
-            unsafe_allow_html=True,
-        )
+    ts_str = last_run.strftime("%Y-%m-%d %H:%M UTC") if last_run else "Unknown"
+    st.markdown(f"**Last pipeline run:** {ts_str}")
+    st.info("🧪 **Latest local run: 22/22 passing**")
 
     st.caption(CAPTION)
