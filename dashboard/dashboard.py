@@ -9,18 +9,15 @@ from google.cloud import bigquery
 
 load_dotenv()
 
-# Resolve project/dataset — Streamlit Cloud secrets take priority,
-# falling back to environment variables for local development.
-try:
-    PROJECT_ID = st.secrets["BIGQUERY_PROJECT_ID"]
-except (KeyError, FileNotFoundError):
-    PROJECT_ID = os.environ["BIGQUERY_PROJECT_ID"]
+PROJECT_ID = (
+    st.secrets.get("BIGQUERY_PROJECT_ID")
+    or os.environ.get("BIGQUERY_PROJECT_ID")
+)
 
-_dataset_default = "gcs_north_star"
-try:
-    DATASET_ID = st.secrets.get("BIGQUERY_DATASET_ID", _dataset_default)
-except FileNotFoundError:
-    DATASET_ID = os.environ.get("BIGQUERY_DATASET_ID", _dataset_default)
+DATASET_ID = (
+    st.secrets.get("BIGQUERY_DATASET_ID")
+    or os.environ.get("BIGQUERY_DATASET_ID", "gcs_north_star")
+)
 
 BAND_COLORS = {
     "Green":  "#1D9E75",
