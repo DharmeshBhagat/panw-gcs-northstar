@@ -625,7 +625,7 @@ def _go_to_account(account_id: str) -> None:
 
 # ── App config ────────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="PANW GCS North Star", layout="wide")
+st.set_page_config(page_title="SVC GCS North Star", layout="wide")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
@@ -821,7 +821,7 @@ if page == "Home":
     june_prs = float(_june["portfolio_prs"].iloc[0]) if not _june.empty else portfolio_prs
 
     st.header(f"Realized ARR Scorecard — {month_label}")
-    st.caption(f"Portfolio health · {month_a.strftime('%B %Y')} · Palo Alto Networks GCS")
+    st.caption(f"Portfolio health · {month_a.strftime('%B %Y')} · SVC GCS")
 
     st.markdown(f"""
 <div style="
