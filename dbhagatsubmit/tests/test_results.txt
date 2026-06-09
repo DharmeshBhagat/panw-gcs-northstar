@@ -1,5 +1,0 @@
-tests/test_invariants.py::test_inv_t03_shelfware_override PASSED         [ 90%]
-tests/test_invariants.py::test_inv_t04_shelfware_accounts_zero_prs PASSED [ 95%]
-tests/test_invariants.py::test_inv_t05_portfolio_prs_weighted PASSED     [100%]
-
-======================== 22 passed in 92.18s (0:01:32) =========================

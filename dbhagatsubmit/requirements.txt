@@ -1,0 +1,9 @@
+google-cloud-bigquery
+google-cloud-bigquery-storage
+pyarrow
+db-dtypes
+pandas
+streamlit
+plotly
+google-auth
+python-dotenv

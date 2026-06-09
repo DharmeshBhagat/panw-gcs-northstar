@@ -9,8 +9,17 @@ from google.cloud import bigquery
 
 load_dotenv()
 
-PROJECT_ID = os.environ["BIGQUERY_PROJECT_ID"]
-DATASET_ID = os.environ.get("BIGQUERY_DATASET_ID", "gcs_north_star")
+PROJECT_ID = (
+    st.secrets.get("BIGQUERY_PROJECT_ID")
+    or os.environ.get("BIGQUERY_PROJECT_ID")
+    or "panw-gcs-northstar-498507"
+)
+
+DATASET_ID = (
+    st.secrets.get("BIGQUERY_DATASET_ID")
+    or os.environ.get("BIGQUERY_DATASET_ID")
+    or "gcs_north_star"
+)
 
 BAND_COLORS = {
     "Green":  "#1D9E75",
@@ -156,9 +165,9 @@ def help_icon(key: str) -> None:
             "body": (
                 "Accounts consuming 120%+ of their included credits "
                 "consistently for 3 or more months.\n\n"
-                "This is a positive signal — the customer has outgrown "
-                "their current contract and is ready for an upsell or "
-                "right-sizing conversation.\n\n"
+                "This can be a positive signal when technical health "
+                "is strong. If health is degraded, resolve technical "
+                "friction before expansion.\n\n"
                 "Expansion Momentum = 1.00 for these accounts.  \n"
                 "flag_overage = True in the data."
             ),
@@ -255,8 +264,18 @@ def help_icon(key: str) -> None:
 # ── BigQuery helpers ──────────────────────────────────────────────────────────
 
 @st.cache_resource
-def _bq_client() -> bigquery.Client:
-    return bigquery.Client(project=PROJECT_ID)
+def _bq_client():
+    if "gcp_service_account" in st.secrets:
+        from google.oauth2 import service_account
+        credentials = service_account.Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"],
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+        return bigquery.Client(
+            project=st.secrets["BIGQUERY_PROJECT_ID"],
+            credentials=credentials,
+        )
+    return bigquery.Client(project=os.environ["BIGQUERY_PROJECT_ID"])
 
 
 def _coerce_numerics(df: pd.DataFrame) -> pd.DataFrame:
@@ -606,7 +625,7 @@ def _go_to_account(account_id: str) -> None:
 
 # ── App config ────────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="PANW GCS North Star", layout="wide")
+st.set_page_config(page_title="SVC GCS North Star", layout="wide")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
@@ -802,7 +821,7 @@ if page == "Home":
     june_prs = float(_june["portfolio_prs"].iloc[0]) if not _june.empty else portfolio_prs
 
     st.header(f"Realized ARR Scorecard — {month_label}")
-    st.caption(f"Portfolio health · {month_a.strftime('%B %Y')} · Palo Alto Networks GCS")
+    st.caption(f"Portfolio health · {month_a.strftime('%B %Y')} · SVC GCS")
 
     st.markdown(f"""
 <div style="
@@ -1530,7 +1549,9 @@ elif page == "By Region":
         st.caption(
             "**DQ note:** Region roll-ups exclude accounts where `included_monthly_compute_credits = 0` "
             "(DQ-004) and accounts with orphaned or pre-2024 usage logs (DQ-001/DQ-002). "
-            "At-Risk ARR reflects unrealized gap for accounts with PRS < 0.70 only. "
+            "At-Risk ARR reflects contracted ARR for Orange and Red "
+            "accounts (PRS < 0.60), not the unrealized gap. "
+            "Use the portfolio gap for the realized-vs-contracted delta. "
             "See the Data Quality page for full exclusion counts."
         )
 
@@ -2003,7 +2024,7 @@ elif page == "Data Quality":
     st.caption(
         f"{_clean:,} clean logs of {_total_raw:,} total · "
         f"{conf['orphaned_logs']:,} orphaned (DQ-001) · "
-        f"{conf['rogue_logs']:,} pre-contract (DQ-002) · "
+        f"{conf['rogue_logs']:,} pre-period / rogue date (DQ-002) · "
         f"{conf['negative_logs']:,} negative values (DQ-005)"
     )
 
