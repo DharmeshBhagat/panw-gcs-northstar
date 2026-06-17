@@ -1,0 +1,10 @@
+google-cloud-bigquery==3.41.0
+google-auth>=2.28.0
+google-cloud-bigquery-storage==2.39.0
+pyarrow==24.0.0
+db-dtypes==1.7.0
+pandas==2.2.3
+streamlit==1.45.1
+plotly==6.1.2
+pytest==8.3.5
+python-dotenv==1.1.0
